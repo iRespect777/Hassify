@@ -129,7 +129,7 @@
 ### Шаг 1 — Скачать скрипт
 
 ```bash
-wget -O install_ha.sh [https://your-url/install_ha.sh](https://github.com/iRespect777/HAS-tvbox/blob/main/install_ha.sh)
+wget -O install_ha.sh https://github.com/iRespect777/HAS-tvbox/blob/main/install_ha.sh
 ```
 
 Или создать вручную:
