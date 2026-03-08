@@ -2,11 +2,11 @@
 
 # ============================================================================
 #  Home Assistant Supervised — ULTIMATE INSTALLER
-#  Версия:    7.3 (Final Release)
+#  Версия:    7.4 (Final Release)
 #  Платформа: TV-Боксы и SBC (Armbian Bookworm / aarch64 / x86_64)
 # ============================================================================
 
-readonly SCRIPT_VERSION="7.3"
+readonly SCRIPT_VERSION="7.4"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly STATE_FILE="/root/.ha_install_state"
 readonly LOCK_FILE="/var/lock/ha_install.lock"
@@ -177,6 +177,10 @@ is_pkg_installed() {
     dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
 }
 
+pkg_available() {
+    apt-cache show "$1" >/dev/null 2>&1
+}
+
 run_cmd() {
     local desc="$1"; shift
     local lfile
@@ -235,12 +239,10 @@ download_file() {
     return 1
 }
 
-# ── Многоуровневый детект версии (4 уровня) ──
 get_latest_release() {
     local repo="$1"
     local version=""
 
-    # Уровень 1: GitHub API + jq
     if command -v curl &>/dev/null && command -v jq &>/dev/null; then
         version=$(curl -fsSL --timeout 15 \
             "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null \
@@ -248,7 +250,6 @@ get_latest_release() {
         version=$(echo "$version" | tr -d '[:space:]')
     fi
 
-    # Уровень 2: curl -L → финальный URL (самый надёжный)
     if [ -z "$version" ] && command -v curl &>/dev/null; then
         local final_url=""
         final_url=$(curl -sL --timeout 15 -o /dev/null \
@@ -259,7 +260,6 @@ get_latest_release() {
         fi
     fi
 
-    # Уровень 3: curl -sI → Location
     if [ -z "$version" ] && command -v curl &>/dev/null; then
         version=$(curl -sI --timeout 15 \
             "https://github.com/${repo}/releases/latest" 2>/dev/null \
@@ -269,7 +269,6 @@ get_latest_release() {
             | tr -d '[:space:]') || true
     fi
 
-    # Уровень 4: wget
     if [ -z "$version" ] && command -v wget &>/dev/null; then
         version=$(wget -q --timeout=15 --max-redirect=0 -S \
             "https://github.com/${repo}/releases/latest" 2>&1 \
@@ -318,7 +317,6 @@ get_cpu_temp() {
         || echo ""
 }
 
-# ── Динамический os-release в зависимости от версии HA ──
 generate_os_release() {
     local ha_ver="$1"
     local major
@@ -696,18 +694,14 @@ do_uninstall() {
         read -r cd; [ "$cd" = "yes" ] && { rm -rf "$HASSIO_DIR"; msg_ok "Данные удалены"; } \
             || msg_info "Данные сохранены"
     fi
-
     if [ -d "$HA_BACKUP_DIR" ]; then
         echo -en " ${WARN}  ${YELLOW}Удалить бэкапы? (yes/no): ${NC}"
         read -r cb; [ "$cb" = "yes" ] && { rm -rf "$HA_BACKUP_DIR"; msg_ok "Бэкапы удалены"; } \
             || msg_info "Бэкапы сохранены"
     fi
 
-    # Восстановление оригинального os-release
-    if [ -f "${BACKUP_DIR}/os-release.original" ]; then
-        cp "${BACKUP_DIR}/os-release.original" /etc/os-release
-        msg_ok "os-release восстановлен"
-    fi
+    [ -f "${BACKUP_DIR}/os-release.original" ] && \
+        cp "${BACKUP_DIR}/os-release.original" /etc/os-release && msg_ok "os-release восстановлен"
     rm -f "$FAKED_OS_RELEASE" 2>/dev/null || true
 
     reset_state
@@ -741,8 +735,8 @@ ${BOLD}Установка:${NC}
   --dry-run             Тестовый прогон
   --silent              Тихий режим
   --machine TYPE        Тип машины
-  --os-agent-ver X      Версия OS-Agent (если GitHub недоступен)
-  --ha-ver X            Версия HA Supervised
+  --os-agent-ver X      Версия OS-Agent вручную
+  --ha-ver X            Версия HA Supervised вручную
 
 ${BOLD}Типы машин:${NC}
   qemuarm-64            TV-боксы / SBC (по умолчанию)
@@ -767,21 +761,21 @@ parse_args() {
     RUN_WIZARD=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -h|--help)       show_help; exit 0 ;;
-            -c|--check)      CHECK_ONLY=true ;;
-            -s|--status)     SHOW_STATUS=true ;;
-            -u|--uninstall)  UNINSTALL=true ;;
-            --reset-state)   reset_state; exit 0 ;;
-            --skip-update)   SKIP_UPDATE=true ;;
-            --dry-run)       DRY_RUN=true ;;
-            --silent)        SILENT=true; RUN_WIZARD=false ;;
-            --machine)       shift; [ $# -eq 0 ] && { msg_error "--machine требует аргумент"; exit 1; }; HA_MACHINE="$1"; MACHINE_EXPLICIT=true ;;
-            --machine=*)     HA_MACHINE="${1#*=}"; MACHINE_EXPLICIT=true ;;
-            --os-agent-ver)  shift; [ $# -eq 0 ] && { msg_error "--os-agent-ver требует аргумент"; exit 1; }; OVERRIDE_OS_AGENT_VER="$1" ;;
+            -h|--help)        show_help; exit 0 ;;
+            -c|--check)       CHECK_ONLY=true ;;
+            -s|--status)      SHOW_STATUS=true ;;
+            -u|--uninstall)   UNINSTALL=true ;;
+            --reset-state)    reset_state; exit 0 ;;
+            --skip-update)    SKIP_UPDATE=true ;;
+            --dry-run)        DRY_RUN=true ;;
+            --silent)         SILENT=true; RUN_WIZARD=false ;;
+            --machine)        shift; [ $# -eq 0 ] && { msg_error "--machine требует аргумент"; exit 1; }; HA_MACHINE="$1"; MACHINE_EXPLICIT=true ;;
+            --machine=*)      HA_MACHINE="${1#*=}"; MACHINE_EXPLICIT=true ;;
+            --os-agent-ver)   shift; [ $# -eq 0 ] && { msg_error "--os-agent-ver требует аргумент"; exit 1; }; OVERRIDE_OS_AGENT_VER="$1" ;;
             --os-agent-ver=*) OVERRIDE_OS_AGENT_VER="${1#*=}" ;;
-            --ha-ver)        shift; [ $# -eq 0 ] && { msg_error "--ha-ver требует аргумент"; exit 1; }; OVERRIDE_HA_VER="$1" ;;
-            --ha-ver=*)      OVERRIDE_HA_VER="${1#*=}" ;;
-            *)               msg_error "Неизвестный параметр: $1"; show_help; exit 1 ;;
+            --ha-ver)         shift; [ $# -eq 0 ] && { msg_error "--ha-ver требует аргумент"; exit 1; }; OVERRIDE_HA_VER="$1" ;;
+            --ha-ver=*)       OVERRIDE_HA_VER="${1#*=}" ;;
+            *)                msg_error "Неизвестный параметр: $1"; show_help; exit 1 ;;
         esac
         shift
     done
@@ -819,16 +813,29 @@ step_install_deps() {
     is_done "$sid" && return 0
     header "ШАГ 2 — ЗАВИСИМОСТИ"
 
+    # Обязательные пакеты (должны быть в любом Debian/Armbian)
     local pkgs=(
         apparmor avahi-daemon bluez ca-certificates cifs-utils
         curl dbus gnupg jq libglib2.0-bin lsb-release
-        network-manager nfs-common software-properties-common
+        network-manager nfs-common
         systemd-journal-remote systemd-resolved systemd-timesyncd
-        udisks2 usbutils wget qrencode cpufrequtils
+        udisks2 usbutils wget qrencode
     )
+
+    # Условные обязательные
     [ "$OPT_ZRAM" = true ]       && pkgs+=(zram-tools)
     [ "$OPT_UFW" = true ]        && pkgs+=(ufw fail2ban)
     [ "$OPT_AUTOUPDATE" = true ] && pkgs+=(unattended-upgrades)
+
+    # Опциональные — добавляем только если есть в репозиториях
+    local optional_pkgs=(software-properties-common cpufrequtils linux-cpupower)
+    for p in "${optional_pkgs[@]}"; do
+        if pkg_available "$p"; then
+            pkgs+=("$p")
+        else
+            msg_dim "Пакет ${p} недоступен в репозиториях — пропуск"
+        fi
+    done
 
     local to_install=()
     for p in "${pkgs[@]}"; do
@@ -836,10 +843,11 @@ step_install_deps() {
     done
 
     if [ ${#to_install[@]} -eq 0 ]; then
-        msg_ok "Все ${#pkgs[@]} пакетов установлены"
+        msg_ok "Все пакеты установлены"
     else
         msg_info "Нужно: ${#to_install[@]} из ${#pkgs[@]}"
-        if run_cmd "Пакетная установка" apt-get install -y "${to_install[@]}"; then
+        if run_cmd "Пакетная установка (${#to_install[@]} шт.)" \
+            apt-get install -y "${to_install[@]}"; then
             msg_ok "Зависимости установлены"
         else
             msg_warn "Пакетная не удалась. По одному..."
@@ -936,7 +944,7 @@ step_configure_apparmor() {
             else echo "extraargs=apparmor=1 security=apparmor" >> "$f"; fi
             msg_ok "Пропатчен: $(basename "$f")"; patched=true
         done
-        [ "$patched" = false ] && msg_error "Файл загрузчика не найден!" || msg_warn "AppArmor активируется после reboot"
+        [ "$patched" = false ] && msg_error "Файл загрузчика не найден!" || msg_warn "AppArmor включится после reboot"
     fi
     systemctl enable apparmor 2>/dev/null || true; systemctl start apparmor 2>/dev/null || true
     mark_done "$sid"
@@ -947,6 +955,7 @@ step_performance() {
     is_done "$sid" && return 0
     header "ШАГ 5 — ПРОИЗВОДИТЕЛЬНОСТЬ И ЖЕЛЕЗО"
 
+    # ── ZRAM / Swap ──
     if [ "$OPT_ZRAM" = true ]; then
         msg_action "ZRAM..."
         [ -f /swapfile ] && { swapoff /swapfile 2>/dev/null || true; rm -f /swapfile; sed -i '/swapfile/d' /etc/fstab; }
@@ -966,11 +975,19 @@ EOF
         grep -q "swapfile" /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
     fi
 
+    # ── CPU Governor (с fallback cpufrequtils → cpupower) ──
     if command -v cpufreq-set &>/dev/null; then
         echo 'GOVERNOR="performance"' > /etc/default/cpufrequtils
-        systemctl restart cpufrequtils 2>/dev/null || true; msg_ok "CPU: performance"
+        systemctl restart cpufrequtils 2>/dev/null || true
+        msg_ok "CPU: performance (cpufrequtils)"
+    elif command -v cpupower &>/dev/null; then
+        cpupower frequency-set -g performance 2>/dev/null || true
+        msg_ok "CPU: performance (cpupower)"
+    else
+        msg_dim "Управление частотой CPU недоступно — пропуск"
     fi
 
+    # ── eMMC/SD ──
     if [ "$OPT_EMMC_TUNING" = true ]; then
         msg_action "Тюнинг eMMC/SD..."
         echo "vm.swappiness=10" > /etc/sysctl.d/99-ha-swap.conf
@@ -996,6 +1013,7 @@ JRNL
         fi
     fi
 
+    # ── USB Power ──
     if [ "$OPT_USB_POWER" = true ]; then
         for dev in /sys/bus/usb/devices/*/power/autosuspend; do
             [ -f "$dev" ] && echo -1 > "$dev" 2>/dev/null || true
@@ -1015,20 +1033,53 @@ step_install_docker() {
     header "ШАГ 6 — DOCKER"
 
     if command -v docker &>/dev/null; then
-        msg_ok "Docker: $(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
+        msg_ok "Docker уже установлен: $(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
     else
+        # Удаление старых версий (ошибки игнорируются — пакетов может не быть)
         apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+
         spinner_start "Установка Docker"
-        local ok=false; curl -fsSL https://get.docker.com | sh >/dev/null 2>&1 && ok=true
+        # Не проверяем exit code — get.docker.com может вернуть !=0 при предупреждениях
+        curl -fsSL https://get.docker.com 2>/dev/null | sh >/dev/null 2>&1 || true
         spinner_stop
-        [ "$ok" = true ] && msg_ok "Docker установлен" || { msg_error "Ошибка Docker"; exit 1; }
+
+        # Обновляем хеш-таблицу PATH
+        hash -r 2>/dev/null || true
+
+        # Проверяем результат по наличию бинарника, а не по exit code
+        if ! command -v docker &>/dev/null; then
+            msg_warn "get.docker.com не установил docker. Попытка через apt..."
+            apt-get update -qq 2>/dev/null || true
+            if apt-get install -y docker-ce docker-ce-cli containerd.io >/dev/null 2>&1; then
+                msg_ok "Docker установлен через apt"
+            else
+                msg_error "Docker не удалось установить"
+                msg_dim "Установите вручную: curl -fsSL https://get.docker.com | sh"
+                exit 1
+            fi
+        else
+            msg_ok "Docker установлен"
+        fi
     fi
+
     mkdir -p /etc/docker
     [ ! -f /etc/docker/daemon.json ] && cat > /etc/docker/daemon.json << 'EOF'
 { "log-driver": "journald", "storage-driver": "overlay2" }
 EOF
-    systemctl enable docker 2>/dev/null || true; systemctl restart docker 2>/dev/null || true
-    docker info &>/dev/null || { msg_error "Docker не отвечает!"; exit 1; }
+
+    systemctl enable docker 2>/dev/null || true
+    systemctl restart docker 2>/dev/null || true
+
+    # Финальная проверка — Docker должен отвечать
+    local docker_wait=0
+    while ! docker info &>/dev/null; do
+        sleep 2; docker_wait=$((docker_wait+2))
+        if [ $docker_wait -ge 30 ]; then
+            msg_error "Docker установлен, но не отвечает"
+            msg_dim "Проверьте: systemctl status docker"
+            exit 1
+        fi
+    done
     msg_ok "Docker: $(docker --version | awk '{print $3}' | tr -d ',')"
     mark_done "$sid"
 }
@@ -1074,11 +1125,8 @@ step_install_ha() {
     header "ШАГ 8 — HOME ASSISTANT SUPERVISED"
 
     mkdir -p "$BACKUP_DIR"
-
-    # Бэкап оригинального os-release (один раз)
     [ ! -f "${BACKUP_DIR}/os-release.original" ] && cp /etc/os-release "${BACKUP_DIR}/os-release.original"
 
-    # Определяем версию HA
     local v=""
     if [ -n "$OVERRIDE_HA_VER" ]; then
         v="$OVERRIDE_HA_VER"; msg_info "Версия HA (вручную): ${v}"
@@ -1093,10 +1141,8 @@ step_install_ha() {
         exit 1
     fi
 
-    # Генерируем правильный os-release для этой версии HA
+    # Генерируем os-release в зависимости от major-версии HA
     generate_os_release "$v" > /etc/os-release
-
-    # Сохраняем копию для drop-in (чтобы supervisor мог восстановить при рестарте)
     cp /etc/os-release "$FAKED_OS_RELEASE"
 
     local faked_pretty
@@ -1121,7 +1167,7 @@ step_install_ha() {
 
     [ $de -ne 0 ] && { msg_warn "dpkg код ${de}, исправление..."; apt-get install -f -y >/dev/null 2>&1 || true; }
 
-    # Drop-in: восстанавливает os-release из сохранённой копии перед каждым стартом supervisor
+    # Drop-in: восстанавливает os-release из сохранённой копии перед стартом
     mkdir -p /etc/systemd/system/hassio-supervisor.service.d
     cat > /etc/systemd/system/hassio-supervisor.service.d/fix-os-release.conf << 'DROPIN'
 [Service]
@@ -1400,6 +1446,7 @@ RESTORE
         msg_ok "Автобэкап (вс 4:00, 30 дн)"
     fi
 
+    # Cron — динамический
     {
         echo "# HA maintenance (v${SCRIPT_VERSION})"
         [ "$OPT_WATCHDOG" = true ] && echo "*/5 * * * *  root /usr/local/bin/ha-watchdog >/dev/null 2>&1"
