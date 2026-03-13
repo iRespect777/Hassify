@@ -151,9 +151,11 @@ is_armbian() { [ -f /etc/armbian-release ] || dpkg -l 'armbian-bsp-cli-*' &>/dev
 
 # ========================== ВЫВОД ===========================================
 header() {
-    local t="$1" b="══════════════════════════════════════════════════════════════" p=$((60-${#t}))
-    [ $p -lt 0 ] && p=0
-    echo -e "\n${BLUE}╔${b}╗${NC}\n${BLUE}║${WHITE}${BOLD}  ${t}$(printf '%*s' $p '')${NC}${BLUE}║${NC}\n${BLUE}╚${b}╝${NC}\n"
+  local t="$1"
+  local b="══════════════════════════════════════════════════════════════"
+  local p=$(( 60 - ${#t} ))
+  [ "$p" -lt 0 ] && p=0
+  echo -e "\n${BLUE}╔${b}╗${NC}\n${BLUE}║${WHITE}${BOLD} ${t}$(printf '%*s' "$p" '')${NC}${BLUE}║${NC}\n${BLUE}╚${b}╝${NC}\n"
 }
 separator()  { [ "$SILENT" = true ] && return; echo -e "${DIM}  ────────────────────────────────────────────────────────────${NC}"; }
 msg_info()   { [ "$SILENT" = true ] && return; echo -e " ${INFO}  ${WHITE}$1${NC}"; }
