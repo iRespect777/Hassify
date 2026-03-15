@@ -562,11 +562,13 @@ require_disk_space() {
 # SSH NOHUP
 # ============================================================================
 auto_nohup_if_ssh() {
+  # В silent режиме не спрашивать
+  [ "$SILENT" = true ] && return 0
   if who 2>/dev/null | grep -q pts && [ -z "${HA_NOHUP:-}" ]; then
     msg_warn "Обнаружена SSH-сессия."
-    if [ -t 0 ]; then
+    if [ -t 0 ] && [ -t 1 ]; then
       echo -en "   ${ARROW}  Запустить через nohup (защита от разрыва)? (д/н): " >&2
-      local ans; read -r ans
+      local ans; read -r -t 10 ans || ans="n"
       if [ "$ans" = "y" ] || [ "$ans" = "Y" ] || [ "$ans" = "д" ] || [ "$ans" = "Д" ]; then
         export HA_NOHUP=1
         local nlog="${LOG_DIR}/ha_install_nohup_$(date +%Y%m%d_%H%M%S).log"
@@ -1779,9 +1781,13 @@ run_wizard() {
 # ГЛАВНОЕ МЕНЮ
 # ============================================================================
 show_main_menu() {
+  # Нужен интерактивный терминал
   [ ! -t 0 ] && return 1
+  [ ! -t 1 ] && return 1
+
   local choice
   if command -v whiptail &>/dev/null; then
+    # Проверить что whiptail может работать
     choice=$(whiptail --title "HA Установщик v${SCRIPT_VERSION}" --menu "Действие:" 22 60 14 \
       "install"   "Установить HA Supervised" \
       "check"     "Диагностика" \
@@ -1796,7 +1802,7 @@ show_main_menu() {
       "uninstall" "Удалить HA" \
       "selftest"  "Самотест" \
       "help"      "Помощь" \
-      3>&1 1>&2 2>&3) || exit 0
+      3>&1 1>&2 2>&3) || return 1
   else
     choice=$(text_menu "HA Установщик v${SCRIPT_VERSION}" "Действие:" \
       "install"   "Установить HA" \
@@ -1811,8 +1817,11 @@ show_main_menu() {
       "history"   "История" \
       "uninstall" "Удалить" \
       "selftest"  "Самотест" \
-      "help"      "Помощь") || exit 0
+      "help"      "Помощь") || return 1
   fi
+
+  # Если whiptail вернул пустоту (не смог отобразить)
+  [ -z "$choice" ] && return 1
 
   case "$choice" in
     install)   RUN_WIZARD=true;;
@@ -3416,7 +3425,9 @@ main() {
 
   # Интерактив: меню если без аргументов
   if [ $# -eq 0 ] && [ "$RUN_WIZARD" = true ]; then
-    show_main_menu 2>/dev/null || true
+    if [ -t 0 ] && [ -t 1 ]; then
+      show_main_menu || true
+    fi
   fi
   [ "$RUN_WIZARD" = true ] && [ "$DRY_RUN" = false ] && run_wizard
 
