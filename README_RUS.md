@@ -31,9 +31,8 @@
 
 Автоматический установщик **Home Assistant Supervised** для одноплатных компьютеров (SBC), TV-боксов и серверов на базе Debian/Armbian. Устанавливает полноценную среду HA Supervised с Docker, OS-Agent, системными оптимизациями, безопасностью, мониторингом и инструментами обслуживания.
 
-### Что устанавливается
+Что устанавливается
 
-```
 ┌─────────────────────────────────────────────────────┐
 │                    HA Supervised                     │
 │  ┌─────────────┐ ┌──────────┐ ┌──────────────────┐  │
@@ -122,7 +121,7 @@
 
 ```bash
 # Скачать и запустить
-wget -O install.sh https://raw.githubusercontent.com/iRespect777/HAS-tvbox/refs/heads/main/install.sh
+wget -O install.sh https://raw.githubusercontent.com/iRespect777/HAS-tvbox/refs/heads/main/install_ru.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
