@@ -1,12 +1,6 @@
+# Home Assistant Supervised — INSTALLER v8.0
 
-
-# Home Assistant Supervised — ULTIMATE INSTALLER v8.0
-
-## Полная документация и руководство
-
----
-
-## 📋 СОДЕРЖАНИЕ
+📋 СОДЕРЖАНИЕ
 
 1. [Обзор](#1-обзор)
 2. [Системные требования](#2-системные-требования)
