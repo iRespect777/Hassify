@@ -43,14 +43,14 @@
 ### Установка с мастером (рекомендуется)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mediahome/ha-installer/main/install.sh -o /tmp/install.sh
+curl -fsSL https://raw.githubusercontent.com/iRespect777/HAS-tvbox/refs/heads/main/ha-installer/install.sh -o /tmp/install.sh
 sudo bash /tmp/install.sh
 ```
 
 ### Установка одной командой
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mediahome/ha-installer/main/install.sh -o /tmp/install.sh
+curl -fsSL https://raw.githubusercontent.com/iRespect777/HAS-tvbox/refs/heads/main/ha-installer/install.sh -o /tmp/install.sh
 sudo bash /tmp/install.sh --profile standard --timezone Europe/Moscow
 ```
 
