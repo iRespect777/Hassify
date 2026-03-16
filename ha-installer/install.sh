@@ -179,7 +179,7 @@ spinner_start() {
   ( trap 'exit 0' INT TERM HUP
     i=0 e=0; while true; do
     local c; case $((i%4)) in 0) c="|";; 1) c="/";; 2) c="-";; 3) c="\\";; esac
-    printf "\r  %s %s (%dc)  " "$c" "$d" "$e" > /dev/tty 2>/dev/null || break
+    printf "\r  %s %s (%dс)  " "$c" "$d" "$e" > /dev/tty 2>/dev/null || break
     sleep 1; i=$((i+1)); e=$((e+1))
   done ) &
   spinner_pid=$!; disown "$spinner_pid" 2>/dev/null || true
