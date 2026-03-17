@@ -135,10 +135,16 @@ msg_dim()    { [ "$SILENT" = true ] && return; echo -e "      ${DIM}$1${NC}"; }
 
 progress_bar() {
   [ "$SILENT" = true ] && return
-  local current="$1" total="$2" desc="${3:-}"
-  [ "$total" -le 0 ] 2>/dev/null && return
-  local width=35 pct=$((current * 100 / total))
-  local filled=$((current * width / total)) empty=$((width - filled))
+  local current="${1:-0}" total="${2:-0}" desc="${3:-}"
+  # Защита от деления на ноль и нечисловых значений
+  [[ "$total" =~ ^[0-9]+$ ]] || return
+  [[ "$current" =~ ^[0-9]+$ ]] || return
+  [ "$total" -le 0 ] && return
+  [ "$current" -gt "$total" ] && current=$total
+  local width=35
+  local pct=$((current * 100 / total))
+  local filled=$((current * width / total))
+  local empty=$((width - filled))
   local bar="" i
   for ((i=0; i<filled; i++)); do bar="${bar}#"; done
   for ((i=0; i<empty; i++)); do bar="${bar}."; done
