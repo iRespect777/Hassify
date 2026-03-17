@@ -2030,7 +2030,7 @@ step_install_deps() {
   local ti=()
   for p in "${pkgs[@]}"; do is_pkg_installed "$p" || ti+=("$p"); done
 
-    if [ ${#ti[@]} -eq 0 ]; then
+      if [ ${#ti[@]} -eq 0 ]; then
     msg_ok "Все пакеты установлены"
   else
     # Ждём lock один раз
@@ -2057,7 +2057,7 @@ step_install_deps() {
       for p in "${ti[@]}"; do
         i=$((i+1))
 
-        # Прогресс
+        # Прогресс (переменные инициализированы до арифметики)
         local width=25
         local pct=0 filled=0 empty=0
         pct=$((i * 100 / total))
