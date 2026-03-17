@@ -2191,6 +2191,14 @@ RCEOF
     # Остановить NM если он всё-таки запустился (настроим на шаге network)
     systemctl stop NetworkManager 2>/dev/null || true
     msg_dim "NetworkManager будет настроен на шаге СЕТЬ"
+    # Защита DNS — systemd-resolved мог сломать resolv.conf
+    if ! ping -c1 -W3 github.com &>/dev/null && ping -c1 -W2 8.8.8.8 &>/dev/null; then
+      msg_warn "DNS сломался при установке — исправление..."
+      rm -f /etc/resolv.conf 2>/dev/null
+      echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" > /etc/resolv.conf
+      sleep 2
+      ping -c1 -W3 github.com &>/dev/null && msg_ok "DNS восстановлен" || msg_warn "DNS не работает"
+    fi
   fi
 
   run_cmd "apt fix" apt_safe -f install -y
