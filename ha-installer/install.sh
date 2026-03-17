@@ -938,15 +938,19 @@ check_internet() {
 }
 
 fix_dns_if_needed() {
-  if ! host github.com &>/dev/null 2>&1 && ping -c1 -W2 8.8.8.8 &>/dev/null; then
+  # Проверка: IP работает но DNS нет
+  if ! ping -c1 -W3 github.com &>/dev/null && ping -c1 -W2 8.8.8.8 &>/dev/null; then
     msg_warn "DNS не работает, исправление..."
-    if [ -L /etc/resolv.conf ]; then
-      msg_dim "resolv.conf - симлинк, пропуск"
-    else
-      [ -f /etc/resolv.conf ] && cp /etc/resolv.conf "${BACKUP_DIR}/resolv.conf.dns-fix" 2>/dev/null
-      printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
-      host github.com &>/dev/null 2>&1 && msg_ok "DNS исправлен" || msg_warn "DNS всё ещё не работает"
+    # Сохранить текущий resolv.conf если ещё не сохранён
+    if [ ! -f "${BACKUP_DIR}/resolv.conf.bak" ]; then
+      mkdir -p "$BACKUP_DIR"
+      cat /etc/resolv.conf > "${BACKUP_DIR}/resolv.conf.bak" 2>/dev/null || true
     fi
+    # Записать рабочие DNS (удалить симлинк если есть)
+    rm -f /etc/resolv.conf 2>/dev/null
+    echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" > /etc/resolv.conf
+    sleep 2
+    ping -c1 -W3 github.com &>/dev/null && msg_ok "DNS исправлен" || msg_warn "DNS всё ещё не работает"
   fi
 }
 
@@ -2074,6 +2078,22 @@ step_install_deps() {
 
   local ti=()
   for p in "${pkgs[@]}"; do is_pkg_installed "$p" || ti+=("$p"); done
+
+    # Бэкап DNS ДО установки пакетов (systemd-resolved может сломать)
+  if [ ! -f "${BACKUP_DIR}/resolv.conf.bak" ]; then
+    mkdir -p "$BACKUP_DIR"
+    if [ -L /etc/resolv.conf ]; then
+      # Симлинк — сохранить содержимое реального файла
+      cat /etc/resolv.conf > "${BACKUP_DIR}/resolv.conf.bak" 2>/dev/null
+    else
+      cp /etc/resolv.conf "${BACKUP_DIR}/resolv.conf.bak" 2>/dev/null
+    fi
+    # Если бэкап пустой или без nameserver — создать рабочий
+    if ! grep -q "nameserver" "${BACKUP_DIR}/resolv.conf.bak" 2>/dev/null || \
+         grep -q "No DNS" "${BACKUP_DIR}/resolv.conf.bak" 2>/dev/null; then
+      echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" > "${BACKUP_DIR}/resolv.conf.bak"
+    fi
+  fi
 
       if [ ${#ti[@]} -eq 0 ]; then
     msg_ok "Все пакеты установлены"
