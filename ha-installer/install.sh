@@ -394,7 +394,7 @@ import_config() {
   while IFS= read -r line || [ -n "$line" ]; do
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-    if [[ "$line" =~ ^(OPT_[A-Z_]+|PROFILE|HA_MACHINE)=(.*) ]]; then
+        if [[ "$line" =~ ^(OPT_[A-Z_]+|PROFILE|HA_MACHINE|STATIC_IP|STATIC_GW|STATIC_DNS|TG_TOKEN|TG_CHAT|PROXY_DOMAIN|REMOTE_BACKUP_TARGET)=(.*) ]]; then
       key="${BASH_REMATCH[1]}"
       val="${BASH_REMATCH[2]}"
       val="${val#\"}"; val="${val%\"}"
@@ -594,9 +594,61 @@ auto_nohup_if_ssh() {
       if [ "$ans" = "y" ] || [ "$ans" = "Y" ] || [ "$ans" = "д" ] || [ "$ans" = "Д" ]; then
         export HA_NOHUP=1
         local nlog="${LOG_DIR}/ha_install_nohup_$(date +%Y%m%d_%H%M%S).log"
+
+        # Сохранить ВСЕ текущие опции в файл
+        local opts_file="${HA_INSTALLER_DIR}/nohup_opts.sh"
+        mkdir -p "$HA_INSTALLER_DIR"
+        {
+          echo "OPT_ZRAM=${OPT_ZRAM}"
+          echo "OPT_EMMC_TUNING=${OPT_EMMC_TUNING}"
+          echo "OPT_USB_POWER=${OPT_USB_POWER}"
+          echo "OPT_UFW=${OPT_UFW}"
+          echo "OPT_SSH_HARDENING=${OPT_SSH_HARDENING}"
+          echo "OPT_AUTOUPDATE=${OPT_AUTOUPDATE}"
+          echo "OPT_WATCHDOG=${OPT_WATCHDOG}"
+          echo "OPT_THERMAL=${OPT_THERMAL}"
+          echo "OPT_BACKUP=${OPT_BACKUP}"
+          echo "OPT_HACS=${OPT_HACS}"
+          echo "OPT_HOSTNAME=${OPT_HOSTNAME}"
+          echo "OPT_STATIC_IP=${OPT_STATIC_IP}"
+          echo "OPT_TELEGRAM=${OPT_TELEGRAM}"
+          echo "OPT_MONITORING=${OPT_MONITORING}"
+          echo "OPT_REVERSE_PROXY=${OPT_REVERSE_PROXY}"
+          echo "OPT_REMOTE_BACKUP=${OPT_REMOTE_BACKUP}"
+          echo "OPT_BOOT_RECOVERY=${OPT_BOOT_RECOVERY}"
+          echo "OPT_USB_DETECT=${OPT_USB_DETECT}"
+          echo "PROFILE=\"${PROFILE}\""
+          echo "HA_MACHINE=\"${HA_MACHINE}\""
+          [ -n "$STATIC_IP" ] && echo "STATIC_IP=\"${STATIC_IP}\""
+          [ -n "$STATIC_GW" ] && echo "STATIC_GW=\"${STATIC_GW}\""
+          [ -n "$STATIC_DNS" ] && echo "STATIC_DNS=\"${STATIC_DNS}\""
+          [ -n "$TG_TOKEN" ] && echo "TG_TOKEN=\"${TG_TOKEN}\""
+          [ -n "$TG_CHAT" ] && echo "TG_CHAT=\"${TG_CHAT}\""
+          [ -n "$PROXY_DOMAIN" ] && echo "PROXY_DOMAIN=\"${PROXY_DOMAIN}\""
+          [ -n "$REMOTE_BACKUP_TARGET" ] && echo "REMOTE_BACKUP_TARGET=\"${REMOTE_BACKUP_TARGET}\""
+        } > "$opts_file"
+        chmod 600 "$opts_file"
+
+        # Собрать аргументы
+        local nohup_args="--silent --import-config ${opts_file}"
+        [ -n "$OPT_TIMEZONE" ]       && nohup_args="${nohup_args} --timezone ${OPT_TIMEZONE}"
+        [ -n "$OPT_DATA_DIR" ]       && nohup_args="${nohup_args} --data-dir ${OPT_DATA_DIR}"
+        [ -n "$OPT_SWAP_SIZE" ]      && nohup_args="${nohup_args} --swap ${OPT_SWAP_SIZE}"
+        [ -n "$OPT_DOCKER_MIRROR" ]  && nohup_args="${nohup_args} --docker-mirror ${OPT_DOCKER_MIRROR}"
+        [ -n "$OPT_WEBHOOK_URL" ]    && nohup_args="${nohup_args} --webhook ${OPT_WEBHOOK_URL}"
+        [ -n "$OPT_RESTORE_BACKUP" ] && nohup_args="${nohup_args} --restore-backup ${OPT_RESTORE_BACKUP}"
+        [ -n "$OPT_LOCALE" ]         && nohup_args="${nohup_args} --locale ${OPT_LOCALE}"
+        [ "$OPT_AUTO_REBOOT" = true ] && nohup_args="${nohup_args} --auto-reboot"
+        [ "$SKIP_UPDATE" = true ]    && nohup_args="${nohup_args} --skip-update"
+        [ "$MACHINE_EXPLICIT" = true ] && nohup_args="${nohup_args} --machine ${HA_MACHINE}"
+        [ -n "$OVERRIDE_OS_AGENT_VER" ] && nohup_args="${nohup_args} --os-agent-ver ${OVERRIDE_OS_AGENT_VER}"
+        [ -n "$OVERRIDE_HA_VER" ]    && nohup_args="${nohup_args} --ha-ver ${OVERRIDE_HA_VER}"
+
         msg_info "Следить: tail -f ${nlog}"
-        nohup bash "$0" $ORIGINAL_ARGS >> "$nlog" 2>&1 &
+        nohup bash "$0" $nohup_args </dev/null >> "$nlog" 2>&1 &
         msg_ok "PID: $!"
+        msg_info "Установка продолжается в фоне."
+        msg_info "Отключение SSH не прервёт установку."
         exit 0
       fi
     fi
