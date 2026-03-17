@@ -1089,10 +1089,76 @@ wait_prefetch() {
 
 rollback_network() {
   msg_warn "Откат сети..."
-  [ -f "${BACKUP_DIR}/interfaces.bak" ] && cp "${BACKUP_DIR}/interfaces.bak" /etc/network/interfaces 2>/dev/null
-  [ -f "${BACKUP_DIR}/resolv.conf.bak" ] && cp "${BACKUP_DIR}/resolv.conf.bak" /etc/resolv.conf 2>/dev/null
-  systemctl restart NetworkManager 2>/dev/null || true
-  systemctl start networking 2>/dev/null || true
+
+  # 1. Остановить и отключить NetworkManager
+  systemctl stop NetworkManager 2>/dev/null || true
+  systemctl disable NetworkManager 2>/dev/null || true
+  msg_dim "NetworkManager остановлен"
+
+  # 2. Восстановить /etc/network/interfaces
+  if [ -f "${BACKUP_DIR}/interfaces.bak" ]; then
+    cp "${BACKUP_DIR}/interfaces.bak" /etc/network/interfaces 2>/dev/null
+    msg_dim "interfaces восстановлен"
+  fi
+
+  # 3. Восстановить resolv.conf
+  if [ -f "${BACKUP_DIR}/resolv.conf.bak" ]; then
+    # Удалить симлинк если был создан
+    rm -f /etc/resolv.conf 2>/dev/null
+    cp "${BACKUP_DIR}/resolv.conf.bak" /etc/resolv.conf 2>/dev/null
+    msg_dim "resolv.conf восстановлен"
+  fi
+
+  # 4. Остановить systemd-resolved (мог быть запущен на шаге network)
+  systemctl stop systemd-resolved 2>/dev/null || true
+
+  # 5. Включить и запустить ifupdown
+  systemctl enable networking 2>/dev/null || true
+  systemctl restart networking 2>/dev/null || true
+  msg_dim "networking перезапущен"
+
+  # 6. Если есть ifup — поднять интерфейс вручную
+  local iface=""
+  iface=$(ip -o link show 2>/dev/null | awk -F': ' '!/lo/{print $2; exit}')
+  if [ -n "$iface" ] && command -v ifup &>/dev/null; then
+    ifdown "$iface" 2>/dev/null || true
+    ifup "$iface" 2>/dev/null || true
+    msg_dim "Интерфейс ${iface} переподнят"
+  fi
+
+  # 7. Ждать появления сети
+  local wait=0
+  while [ $wait -lt 30 ]; do
+    local ip=""
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -n "$ip" ]; then
+      msg_ok "Сеть восстановлена: ${ip}"
+      return 0
+    fi
+    sleep 3
+    wait=$((wait + 3))
+    msg_dim "Ожидание сети... ${wait}с"
+  done
+
+  # 8. Последняя попытка — dhclient напрямую
+  if [ -n "$iface" ] && command -v dhclient &>/dev/null; then
+    msg_dim "Попытка dhclient..."
+    dhclient "$iface" 2>/dev/null || true
+    sleep 5
+    local ip=""
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -n "$ip" ]; then
+      msg_ok "Сеть восстановлена через dhclient: ${ip}"
+      return 0
+    fi
+  fi
+
+  msg_error "Не удалось восстановить сеть!"
+  msg_dim "Попробуйте вручную:"
+  msg_dim "  sudo systemctl restart networking"
+  msg_dim "  sudo ifup ${iface:-eth0}"
+  msg_dim "  sudo dhclient ${iface:-eth0}"
+  return 1
 }
 
 detect_usb_dongles() {
@@ -1979,8 +2045,12 @@ step_install_deps() {
   header "[${CURRENT_STEP_NUM}/${TOTAL_STEPS}] ЗАВИСИМОСТИ"
   detect_system_info
 
-  local pkgs=(apparmor avahi-daemon bluez ca-certificates cifs-utils curl dbus gnupg jq
-    libglib2.0-bin network-manager nfs-common systemd-timesyncd udisks2 usbutils wget qrencode)
+    local pkgs=(apparmor avahi-daemon bluez ca-certificates cifs-utils curl dbus gnupg jq
+    libglib2.0-bin nfs-common systemd-timesyncd udisks2 usbutils wget qrencode)
+
+  # network-manager устанавливается отдельно с защитой от обрыва сети
+  local nm_needed=false
+  is_pkg_installed network-manager || nm_needed=true
 
   for p in lsb-release systemd-resolved systemd-journal-remote; do
     pkg_available "$p" && pkgs+=("$p")
@@ -2069,6 +2139,40 @@ step_install_deps() {
     fi
   fi
 
+  # Установка network-manager отдельно с предотвращением автозапуска
+  if [ "$nm_needed" = true ]; then
+    msg_action "Установка network-manager (без автозапуска)..."
+
+    # Запретить автозапуск NM сразу после установки
+    mkdir -p /usr/sbin
+    if [ ! -f /usr/sbin/policy-rc.d ]; then
+      cat > /usr/sbin/policy-rc.d << 'RCEOF'
+#!/bin/sh
+# Temporary: prevent services from starting during install
+exit 101
+RCEOF
+      chmod +x /usr/sbin/policy-rc.d
+      local policy_created=true
+    fi
+
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        -o Dpkg::Options::="--force-confold" \
+        network-manager </dev/null >/dev/null 2>&1; then
+      msg_ok "network-manager установлен"
+    else
+      msg_warn "network-manager не удалось установить"
+    fi
+
+    # Убрать блокировку автозапуска
+    if [ "${policy_created:-false}" = true ]; then
+      rm -f /usr/sbin/policy-rc.d
+    fi
+
+    # Остановить NM если он всё-таки запустился (настроим на шаге network)
+    systemctl stop NetworkManager 2>/dev/null || true
+    msg_dim "NetworkManager будет настроен на шаге СЕТЬ"
+  fi
+
   run_cmd "apt fix" apt_safe -f install -y
   [ "$OPT_EMMC_TUNING" = true ] && apt-get clean 2>/dev/null || true
   setup_swap
@@ -2115,6 +2219,15 @@ step_configure_network() {
   systemctl list-unit-files networking.service &>/dev/null && \
     systemctl is-active --quiet networking 2>/dev/null && \
     systemctl disable networking 2>/dev/null || true
+    # Убедиться что NM установлен
+  if ! is_pkg_installed network-manager; then
+    msg_action "Установка network-manager..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      -o Dpkg::Options::="--force-confold" \
+      network-manager </dev/null >/dev/null 2>&1 || { msg_error "network-manager не установился"; return 1; }
+  fi
+
+  # Теперь NM настроен — можно запускать
   systemctl enable NetworkManager 2>/dev/null || true
   systemctl restart NetworkManager 2>/dev/null || true
 
@@ -2138,10 +2251,17 @@ step_configure_network() {
     r=$((r+1))
   done
 
-  if [ $r -ge 6 ]; then
-    rollback_network; sleep 5
-    ni=$(hostname -I 2>/dev/null | awk '{print $1}')
-    [ -n "$ni" ] && msg_ok "Восстановлено: ${ni}" || { msg_error "Нет сети!"; return 1; }
+    if [ $r -ge 6 ]; then
+    msg_error "Сеть не появилась после переключения на NetworkManager"
+    if rollback_network; then
+      msg_ok "Откат выполнен успешно"
+    else
+      msg_error "Откат не помог!"
+      msg_dim "Подключитесь через UART/HDMI и выполните:"
+      msg_dim "  sudo systemctl stop NetworkManager"
+      msg_dim "  sudo systemctl restart networking"
+      return 1
+    fi
   fi
 
   mark_done "$sid"
