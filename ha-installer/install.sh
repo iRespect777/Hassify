@@ -78,7 +78,6 @@ LOG_FILE=""; LOGGING_ACTIVE=false; TEE_PID=""
 OS_RELEASE_FAKED=false; DAEMON_RELOAD_NEEDED=false
 PREFETCH_PID=""; HA_TMP="/tmp/ha-install"; INSTALL_START=""
 PROFILE=""; FROM_STEP=""; IMPORT_CONFIG=""
-ORIGINAL_ARGS=""
 CURRENT_STEP_NUM=0
 
 # v9.0+ options
@@ -587,8 +586,8 @@ require_disk_space() {
 auto_nohup_if_ssh() {
   if who 2>/dev/null | grep -q pts; then
     msg_warn "Обнаружена SSH-сессия."
-    msg_dim "Установка защищена от разрыва (trap HUP)."
-    msg_dim "Если SSH оборвётся — запустите скрипт снова."
+    msg_dim "Установка защищена от разрыва соединения."
+    msg_dim "Если SSH оборвётся — запустите скрипт снова, он продолжит с того же места."
   fi
 }
 
@@ -610,19 +609,6 @@ estimate_install_time() {
 # ============================================================================
 # REBOOT CONTINUE (with attempt counter + /tmp safety)
 # ============================================================================
-ensure_safe_script_path() {
-  local current_path
-  current_path=$(readlink -f "$0" 2>/dev/null || echo "$0")
-  if [[ "$current_path" == /tmp/* ]] || [[ "$current_path" == /var/tmp/* ]]; then
-    cp "$current_path" "$SAFE_SCRIPT_PATH" 2>/dev/null
-    chmod +x "$SAFE_SCRIPT_PATH"
-    msg_dim "Скрипт скопирован в ${SAFE_SCRIPT_PATH}"
-  elif [ ! -f "$SAFE_SCRIPT_PATH" ]; then
-    cp "$current_path" "$SAFE_SCRIPT_PATH" 2>/dev/null
-    chmod +x "$SAFE_SCRIPT_PATH"
-  fi
-}
-
 setup_reboot_continue() {
   ensure_safe_script_path
   local svc_file="/etc/systemd/system/${REBOOT_CONTINUE_SVC}.service"
@@ -3109,7 +3095,7 @@ do_uninstall() {
     /usr/local/bin/ha-boot-check /usr/local/bin/ha-backup-remote /usr/local/bin/ha-weekly-report \
     /etc/cron.d/ha-tools /etc/udev/rules.d/99-ha-usb-power.rules \
     /etc/ssh/sshd_config.d/99-ha-hardening.conf /etc/sysctl.d/99-ha-swap.conf \
-    /etc/systemd/journald.conf.d/ha-tuning.conf "$HA_INFO_FILE" "$SAFE_SCRIPT_PATH" 2>/dev/null
+    /etc/systemd/journald.conf.d/ha-tuning.conf "$HA_INFO_FILE" 2>/dev/null
 
   [ -f /etc/ufw/after.rules ] && {
     sed -i '/# BEGIN HA-INSTALLER DOCKER-USER/,/# END HA-INSTALLER DOCKER-USER/d' /etc/ufw/after.rules 2>/dev/null
@@ -3475,7 +3461,6 @@ main() {
 
   [ "$EUID" -ne 0 ] && { echo "Требуется root! Используйте: sudo $0"; exit 1; }
 
-  ORIGINAL_ARGS="$*"
   parse_args "$@"
   setup_dirs
   migrate_legacy_paths
