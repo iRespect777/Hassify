@@ -2037,19 +2037,46 @@ step_install_deps() {
     msg_ok "Все пакеты установлены"
   else
     apt_wait_lock || { msg_error "apt заблокирован"; return 1; }
-    local total=${#ti[@]} f=()
+    local total=${#ti[@]}
+    local f=()
     msg_action "Установка ${total} пакетов..."
-    if apt_safe install -y "${ti[@]}" &>/dev/null; then
+
+    # Попытка 1: все пакеты разом (быстрее)
+    if DEBIAN_FRONTEND=noninteractive apt_safe install -y -o Dpkg::Options::="--force-confold" "${ti[@]}" &>/dev/null; then
       msg_ok "Установлено: ${total}"
     else
+      # Попытка 2: поштучно с прогрессом
       msg_warn "Пакетная установка не удалась, поштучно..."
       local i=0
       for p in "${ti[@]}"; do
-        i=$((i+1)); progress_bar $i $total "$p"
-        apt_safe install -y "$p" &>/dev/null || f+=("$p")
+        i=$((i+1))
+
+        # Прогресс-бар в одну строку с именем пакета
+        local width=25
+        local pct=$((i * 100 / total))
+        local filled=$((i * width / total))
+        local empty=$((width - filled))
+        local bar=""
+        local j
+        for ((j=0; j<filled; j++)); do bar="${bar}#"; done
+        for ((j=0; j<empty; j++)); do bar="${bar}."; done
+        printf "\r   [%s] %3d%% [%d/%d] %s " "$bar" "$pct" "$i" "$total" "$p" > /dev/tty 2>/dev/null || true
+
+        if DEBIAN_FRONTEND=noninteractive apt_safe install -y -o Dpkg::Options::="--force-confold" "$p" &>/dev/null; then
+          true  # успех, прогресс-бар обновится на следующей итерации
+        else
+          f+=("$p")
+        fi
       done
-      progress_clear
-      [ ${#f[@]} -gt 0 ] && msg_warn "Не установлены: ${f[*]}" || msg_ok "Установлено: ${total}"
+
+      # Очистить строку прогресса и показать результат
+      printf "\r%80s\r" "" > /dev/tty 2>/dev/null || true
+      if [ ${#f[@]} -gt 0 ]; then
+        msg_ok "Установлено: $((total - ${#f[@]})) из ${total}"
+        msg_warn "Не удалось: ${f[*]}"
+      else
+        msg_ok "Установлено: ${total}"
+      fi
     fi
   fi
 
