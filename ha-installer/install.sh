@@ -3457,7 +3457,7 @@ main() {
   # Импорт конфигурации
   [ -n "$IMPORT_CONFIG" ] && import_config "$IMPORT_CONFIG"
 
-  # Явные режимы (без wizard)
+  # Явные режимы из аргументов командной строки
   [ "$CHECK_ONLY" = true ]      && { show_banner; do_check; exit 0; }
   [ "$SHOW_STATUS" = true ]     && { do_status; exit 0; }
   [ "$UNINSTALL" = true ]       && { show_banner; acquire_lock; do_uninstall; exit 0; }
@@ -3477,9 +3477,23 @@ main() {
       show_main_menu || true
     fi
   fi
+
+  # Повторная проверка после выбора в меню
+  # (show_main_menu устанавливает флаги но не выполняет операции)
+  [ "$CHECK_ONLY" = true ]      && { show_banner; do_check; exit 0; }
+  [ "$SHOW_STATUS" = true ]     && { do_status; exit 0; }
+  [ "$UNINSTALL" = true ]       && { show_banner; acquire_lock; do_uninstall; exit 0; }
+  [ "$DO_UPDATE" = true ]       && { show_banner; acquire_lock; do_update; exit 0; }
+  [ "$DO_SELF_UPDATE" = true ]  && { show_banner; do_self_update; exit 0; }
+  [ "$DO_SELF_TEST" = true ]    && { show_banner; do_self_test; exit $?; }
+  [ "$DO_BENCHMARK" = true ]    && { show_banner; do_benchmark; exit 0; }
+  [ "$DO_EXPORT_CONFIG" = true ] && { show_banner; export_config; exit 0; }
+  [ "$DO_SHOW_HISTORY" = true ] && { show_banner; show_history; exit 0; }
+
+  # Если дошли сюда — это установка (install)
   [ "$RUN_WIZARD" = true ] && [ "$DRY_RUN" = false ] && run_wizard
 
-  # Nohup ДО логирования
+  # Nohup ТОЛЬКО для установки (после wizard, до начала шагов)
   auto_nohup_if_ssh
 
   # Запуск установки
