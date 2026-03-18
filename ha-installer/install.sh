@@ -1459,9 +1459,7 @@ apply_profile() {
 _wizard_cancelled() {
   if command -v whiptail &>/dev/null; then
     whiptail --title "Отменено" --yesno "Начать настройку сначала?\n\nДа = вернуться к началу\nНет = выйти" 10 50
-    local rc=$?
-    [ $rc -eq 0 ] && return 0  # restart
-    return 1  # exit
+    return $?
   else
     echo "" >&2
     echo -en "   Начать сначала? (д/н): " >&2
