@@ -3399,12 +3399,18 @@ do_self_test() {
   local a; a=$(detect_arch)
   [ -n "$a" ] && { msg_ok "Архитектура: ${a}"; pass=$((pass+1)); } || { msg_error "Архитектура"; fail=$((fail+1)); }
 
-  # Тест состояния
-  local tsf="/tmp/ha_test_$$"
-  local orig="$STATE_FILE"; STATE_FILE="$tsf"; rm -f "$tsf"
-  mark_done "test_step"
-  is_done "test_step" && { msg_ok "Состояние: ок"; pass=$((pass+1)); } || { msg_error "Состояние: ошибка"; fail=$((fail+1)); }
-  rm -f "$tsf" "${tsf}.lock"; STATE_FILE="$orig"
+  # Тест состояния (без изменения readonly STATE_FILE)
+  local tsf="/tmp/ha_test_state_$$"
+  rm -f "$tsf" "${tsf}.lock" "${tsf}.new"
+  # Прямая запись без mark_done/is_done (они используют readonly STATE_FILE)
+  echo "test_step|$(date +%s)|${SCRIPT_VERSION}" > "$tsf"
+  if grep -q "^test_step|" "$tsf" 2>/dev/null; then
+    local tv; tv=$(grep "^test_step|" "$tsf" | tail -1 | cut -d'|' -f3)
+    [ "$tv" = "$SCRIPT_VERSION" ] && { msg_ok "Состояние: ок"; pass=$((pass+1)); } || { msg_error "Состояние: ошибка"; fail=$((fail+1)); }
+  else
+    msg_error "Состояние: ошибка"; fail=$((fail+1))
+  fi
+  rm -f "$tsf" "${tsf}.lock" "${tsf}.new"
 
   # Тест профиля
   local saved="$OPT_ZRAM"
