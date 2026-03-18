@@ -1731,21 +1731,21 @@ run_wizard() {
         step=4
         ;;
 
-      # === STEP 4: TIMEZONE ===
+            # === STEP 4: TIMEZONE ===
       4)
-        if [ -z "$OPT_TIMEZONE" ]; then
-          local curtz; curtz=$(timedatectl 2>/dev/null | awk '/Time zone/{print $3}') || curtz="UTC"
-          local result=""
-          if [ "$HAS_WHIPTAIL" = true ]; then
-            result=$(_whip_input "Шаг 4: Часовой пояс" "Например: Europe/Moscow\nТекущий: ${curtz}" "$curtz")
-          else
-            result=$(_text_input_back "Часовой пояс (${curtz})" "$curtz")
-          fi
-          if [ "$_WIZARD_BACK" = true ]; then
-            step=3; PROFILE=""; continue
-          fi
-          OPT_TIMEZONE="${result:-$curtz}"
+        # Сброс при возврате сюда
+        OPT_TIMEZONE=""
+        local curtz; curtz=$(timedatectl 2>/dev/null | awk '/Time zone/{print $3}') || curtz="UTC"
+        local result=""
+        if [ "$HAS_WHIPTAIL" = true ]; then
+          result=$(_whip_input "Шаг 4: Часовой пояс" "Например: Europe/Moscow\nТекущий: ${curtz}" "$curtz")
+        else
+          result=$(_text_input_back "Часовой пояс (${curtz})" "$curtz")
         fi
+        if [ "$_WIZARD_BACK" = true ]; then
+          step=3; PROFILE=""; continue
+        fi
+        OPT_TIMEZONE="${result:-$curtz}"
         [ "$wizard_mode" = "quick" ] && { step=100; continue; }
         step=5
         ;;
@@ -1753,102 +1753,98 @@ run_wizard() {
       # === STEP 5: LOCALE (expert only) ===
       5)
         [ "$wizard_mode" != "expert" ] && { step=6; continue; }
-        if [ -z "$OPT_LOCALE" ]; then
-          local curloc; curloc=$(locale 2>/dev/null | awk -F= '/^LANG=/{print $2}') || curloc="C.UTF-8"
-          local do_locale=false
-          if [ "$HAS_WHIPTAIL" = true ]; then
-            _whip_yesno "Шаг 5: Локаль" "Сменить? Текущая: ${curloc}" "--defaultno" && do_locale=true
-            [ "$_WIZARD_BACK" = true ] && { step=4; OPT_TIMEZONE=""; continue; }
-          else
-            _text_yesno_back "Сменить локаль? (${curloc})" "n" && do_locale=true
-            [ "$_WIZARD_BACK" = true ] && { step=4; OPT_TIMEZONE=""; continue; }
-          fi
-          [ "$do_locale" = true ] && {
-            if [ "$HAS_WHIPTAIL" = true ]; then
-              OPT_LOCALE=$(_whip_input "Локаль" "Например: ru_RU.UTF-8" "$curloc") || OPT_LOCALE=""
-            else
-              OPT_LOCALE=$(text_input "Локаль" "$curloc")
-            fi
-          }
+        OPT_LOCALE=""
+        local curloc; curloc=$(locale 2>/dev/null | awk -F= '/^LANG=/{print $2}') || curloc="C.UTF-8"
+        local do_locale=false
+        if [ "$HAS_WHIPTAIL" = true ]; then
+          _whip_yesno "Шаг 5: Локаль" "Сменить? Текущая: ${curloc}" "--defaultno" && do_locale=true
+          [ "$_WIZARD_BACK" = true ] && { step=4; continue; }
+        else
+          _text_yesno_back "Сменить локаль? (${curloc})" "n" && do_locale=true
+          [ "$_WIZARD_BACK" = true ] && { step=4; continue; }
         fi
+        [ "$do_locale" = true ] && {
+          if [ "$HAS_WHIPTAIL" = true ]; then
+            OPT_LOCALE=$(_whip_input "Локаль" "Например: ru_RU.UTF-8" "$curloc") || OPT_LOCALE=""
+          else
+            OPT_LOCALE=$(text_input "Локаль" "$curloc")
+          fi
+        }
         step=6
         ;;
 
       # === STEP 6: SWAP ===
       6)
-        if [ -z "$OPT_SWAP_SIZE" ]; then
-          local swap_rec="zram"
-          [ "$ram_mb" -lt 1500 ] && swap_rec="2048"
-          [ "$ram_mb" -gt 4000 ] && swap_rec="none"
-          local result=""
-          if [ "$HAS_WHIPTAIL" = true ]; then
-            result=$(_whip_menu "Шаг 6: Swap (RAM: ${ram_mb}МБ)" \
-              "zram" "ZRAM (2-4ГБ)" "1024" "1ГБ файл" "2048" "2ГБ файл" \
-              "4096" "4ГБ файл" "none" "Без swap")
-          else
-            result=$(_text_menu_back "Шаг 6: Swap (${ram_mb}МБ, рек: ${swap_rec})" "Выберите:" \
-              "zram" "ZRAM" "1024" "1ГБ" "2048" "2ГБ" "none" "Без swap")
-          fi
-          [ "$_WIZARD_BACK" = true ] && { step=4; continue; }
-          [ -z "$result" ] && continue
-          OPT_SWAP_SIZE="$result"
+        OPT_SWAP_SIZE=""
+        local swap_rec="zram"
+        [ "$ram_mb" -lt 1500 ] && swap_rec="2048"
+        [ "$ram_mb" -gt 4000 ] && swap_rec="none"
+        local result=""
+        if [ "$HAS_WHIPTAIL" = true ]; then
+          result=$(_whip_menu "Шаг 6: Swap (RAM: ${ram_mb}МБ)" \
+            "zram" "ZRAM (2-4ГБ)" "1024" "1ГБ файл" "2048" "2ГБ файл" \
+            "4096" "4ГБ файл" "none" "Без swap")
+        else
+          result=$(_text_menu_back "Шаг 6: Swap (${ram_mb}МБ, рек: ${swap_rec})" "Выберите:" \
+            "zram" "ZRAM" "1024" "1ГБ" "2048" "2ГБ" "none" "Без swap")
         fi
+        [ "$_WIZARD_BACK" = true ] && { step=4; continue; }
+        [ -z "$result" ] && continue
+        OPT_SWAP_SIZE="$result"
         step=7
         ;;
 
       # === STEP 7: DATA DIR ===
       7)
-        if [ -z "$OPT_DATA_DIR" ]; then
-          local dw=""; [ "$disk_mb" -lt 20000 ] && dw=" (${disk_mb}МБ!)"
-          local use_ext=false
-          if [ "$HAS_WHIPTAIL" = true ]; then
-            _whip_yesno "Шаг 7: Внешний диск" "Использовать?${dw}" "--defaultno" && use_ext=true
-            [ "$_WIZARD_BACK" = true ] && { step=6; OPT_SWAP_SIZE=""; continue; }
-          else
-            _text_yesno_back "Внешний диск?${dw}" "n" && use_ext=true
-            [ "$_WIZARD_BACK" = true ] && { step=6; OPT_SWAP_SIZE=""; continue; }
-          fi
-          [ "$use_ext" = true ] && {
-            local mi; mi=$(lsblk -o NAME,SIZE,MOUNTPOINT,FSTYPE 2>/dev/null | grep -E "sd|nvme" | head -10)
-            if [ "$HAS_WHIPTAIL" = true ]; then
-              OPT_DATA_DIR=$(_whip_input "Путь к данным" "${mi}" "/mnt/data") || OPT_DATA_DIR=""
-            else
-              [ -n "$mi" ] && { echo -e "\n   Диски:" >&2; echo "$mi" | while IFS= read -r l; do echo "   $l" >&2; done; }
-              OPT_DATA_DIR=$(text_input "Путь к данным" "/mnt/data")
-            fi
-          }
+        OPT_DATA_DIR=""
+        local dw=""; [ "$disk_mb" -lt 20000 ] && dw=" (${disk_mb}МБ!)"
+        local use_ext=false
+        if [ "$HAS_WHIPTAIL" = true ]; then
+          _whip_yesno "Шаг 7: Внешний диск" "Использовать?${dw}" "--defaultno" && use_ext=true
+          [ "$_WIZARD_BACK" = true ] && { step=6; continue; }
+        else
+          _text_yesno_back "Внешний диск?${dw}" "n" && use_ext=true
+          [ "$_WIZARD_BACK" = true ] && { step=6; continue; }
         fi
+        [ "$use_ext" = true ] && {
+          local mi; mi=$(lsblk -o NAME,SIZE,MOUNTPOINT,FSTYPE 2>/dev/null | grep -E "sd|nvme" | head -10)
+          if [ "$HAS_WHIPTAIL" = true ]; then
+            OPT_DATA_DIR=$(_whip_input "Путь к данным" "${mi}" "/mnt/data") || OPT_DATA_DIR=""
+          else
+            [ -n "$mi" ] && { echo -e "\n   Диски:" >&2; echo "$mi" | while IFS= read -r l; do echo "   $l" >&2; done; }
+            OPT_DATA_DIR=$(text_input "Путь к данным" "/mnt/data")
+          fi
+        }
         step=8
         ;;
 
       # === STEP 8: WIFI ===
       8)
-        if [ -z "$OPT_WIFI_SSID" ]; then
-          local has_wifi=false
-          { iw dev 2>/dev/null | grep -q Interface || ip link 2>/dev/null | grep -q wlan; } && has_wifi=true
-          if [ "$has_wifi" = true ]; then
-            local do_wifi=false
-            if [ "$HAS_WHIPTAIL" = true ]; then
-              _whip_yesno "Шаг 8: WiFi" "Адаптер найден. Настроить?" "--defaultno" && do_wifi=true
-              [ "$_WIZARD_BACK" = true ] && { step=7; OPT_DATA_DIR=""; continue; }
-            else
-              _text_yesno_back "WiFi найден. Настроить?" "n" && do_wifi=true
-              [ "$_WIZARD_BACK" = true ] && { step=7; OPT_DATA_DIR=""; continue; }
-            fi
-            [ "$do_wifi" = true ] && {
-              local wl; wl=$(nmcli -t -f SSID dev wifi list 2>/dev/null | sort -u | head -10 | tr '\n' ', ') || wl=""
-              if [ "$HAS_WHIPTAIL" = true ]; then
-                OPT_WIFI_SSID=$(_whip_input "WiFi SSID" "Рядом: ${wl}" "") || OPT_WIFI_SSID=""
-                [ -n "$OPT_WIFI_SSID" ] && {
-                  OPT_WIFI_PASS=$(whiptail --title "Пароль WiFi" --passwordbox "Пароль:" 10 50 3>&1 1>&2 2>&3) || OPT_WIFI_SSID=""
-                }
-              else
-                [ -n "$wl" ] && echo -e "   Рядом: ${wl}" >&2
-                OPT_WIFI_SSID=$(text_input "SSID" "")
-                [ -n "$OPT_WIFI_SSID" ] && OPT_WIFI_PASS=$(text_password "Пароль WiFi")
-              fi
-            }
+        OPT_WIFI_SSID=""; OPT_WIFI_PASS=""
+        local has_wifi=false
+        { iw dev 2>/dev/null | grep -q Interface || ip link 2>/dev/null | grep -q wlan; } && has_wifi=true
+        if [ "$has_wifi" = true ]; then
+          local do_wifi=false
+          if [ "$HAS_WHIPTAIL" = true ]; then
+            _whip_yesno "Шаг 8: WiFi" "Адаптер найден. Настроить?" "--defaultno" && do_wifi=true
+            [ "$_WIZARD_BACK" = true ] && { step=7; continue; }
+          else
+            _text_yesno_back "WiFi найден. Настроить?" "n" && do_wifi=true
+            [ "$_WIZARD_BACK" = true ] && { step=7; continue; }
           fi
+          [ "$do_wifi" = true ] && {
+            local wl; wl=$(nmcli -t -f SSID dev wifi list 2>/dev/null | sort -u | head -10 | tr '\n' ', ') || wl=""
+            if [ "$HAS_WHIPTAIL" = true ]; then
+              OPT_WIFI_SSID=$(_whip_input "WiFi SSID" "Рядом: ${wl}" "") || OPT_WIFI_SSID=""
+              [ -n "$OPT_WIFI_SSID" ] && {
+                OPT_WIFI_PASS=$(whiptail --title "Пароль WiFi" --passwordbox "Пароль:" 10 50 3>&1 1>&2 2>&3) || OPT_WIFI_SSID=""
+              }
+            else
+              [ -n "$wl" ] && echo -e "   Рядом: ${wl}" >&2
+              OPT_WIFI_SSID=$(text_input "SSID" "")
+              [ -n "$OPT_WIFI_SSID" ] && OPT_WIFI_PASS=$(text_password "Пароль WiFi")
+            fi
+          }
         fi
         step=9
         ;;
@@ -1856,55 +1852,57 @@ run_wizard() {
       # === STEP 9: DOCKER MIRROR (expert only) ===
       9)
         [ "$wizard_mode" != "expert" ] && { step=10; continue; }
-        if [ -z "$OPT_DOCKER_MIRROR" ]; then
-          local do_mirror=false
-          if [ "$HAS_WHIPTAIL" = true ]; then
-            _whip_yesno "Шаг 9: Зеркало Docker" "Если Docker Hub заблокирован" "--defaultno" && do_mirror=true
-            [ "$_WIZARD_BACK" = true ] && { step=8; OPT_WIFI_SSID=""; continue; }
-          else
-            _text_yesno_back "Зеркало Docker?" "n" && do_mirror=true
-            [ "$_WIZARD_BACK" = true ] && { step=8; OPT_WIFI_SSID=""; continue; }
-          fi
-          [ "$do_mirror" = true ] && {
-            if [ "$HAS_WHIPTAIL" = true ]; then
-              OPT_DOCKER_MIRROR=$(_whip_input "URL зеркала" "" "") || OPT_DOCKER_MIRROR=""
-            else
-              OPT_DOCKER_MIRROR=$(text_input "URL зеркала" "")
-            fi
-          }
+        OPT_DOCKER_MIRROR=""
+        local do_mirror=false
+        if [ "$HAS_WHIPTAIL" = true ]; then
+          _whip_yesno "Шаг 9: Зеркало Docker" "Если Docker Hub заблокирован" "--defaultno" && do_mirror=true
+          [ "$_WIZARD_BACK" = true ] && { step=8; continue; }
+        else
+          _text_yesno_back "Зеркало Docker?" "n" && do_mirror=true
+          [ "$_WIZARD_BACK" = true ] && { step=8; continue; }
         fi
+        [ "$do_mirror" = true ] && {
+          if [ "$HAS_WHIPTAIL" = true ]; then
+            OPT_DOCKER_MIRROR=$(_whip_input "URL зеркала" "" "") || OPT_DOCKER_MIRROR=""
+          else
+            OPT_DOCKER_MIRROR=$(text_input "URL зеркала" "")
+          fi
+        }
         step=10
         ;;
 
       # === STEP 10: NOTIFICATIONS ===
       10)
+        TG_TOKEN=""; TG_CHAT=""; OPT_WEBHOOK_URL=""
+        local tg_was_selected="$OPT_TELEGRAM"
+
         # If Telegram was selected in components, ask for token
-        if [ "$OPT_TELEGRAM" = true ] && [ -z "$TG_TOKEN" ]; then
+        if [ "$tg_was_selected" = true ]; then
           if [ "$HAS_WHIPTAIL" = true ]; then
             TG_TOKEN=$(_whip_input "Шаг 10: Telegram" "Токен бота" "")
-            [ "$_WIZARD_BACK" = true ] && { step=$((step - 1)); continue; }
+            [ "$_WIZARD_BACK" = true ] && { step=$((wizard_mode == "expert" ? 9 : 8)); continue; }
             [ -n "$TG_TOKEN" ] && { TG_CHAT=$(_whip_input "Telegram" "Chat ID" "") || TG_CHAT=""; }
           else
             TG_TOKEN=$(_text_input_back "Токен бота" "")
-            [ "$_WIZARD_BACK" = true ] && { step=$((step - 1)); continue; }
+            [ "$_WIZARD_BACK" = true ] && { step=$((wizard_mode == "expert" ? 9 : 8)); continue; }
             [ -n "$TG_TOKEN" ] && TG_CHAT=$(text_input "Chat ID" "")
           fi
           { [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; } && OPT_TELEGRAM=false
         fi
 
-        # If no notification method yet, offer choices
+        # If no notification method, offer choices
         if [ "$OPT_TELEGRAM" != true ] && [ -z "$OPT_WEBHOOK_URL" ]; then
           local notif=""
           if [ "$HAS_WHIPTAIL" = true ]; then
             notif=$(_whip_menu "Шаг 10: Уведомления" \
               "none" "Без уведомлений" "telegram" "Telegram" \
               "ntfy" "ntfy.sh (бесплатно)" "discord" "Discord" "custom" "Свой webhook")
-            [ "$_WIZARD_BACK" = true ] && { step=$((step - 1)); continue; }
+            [ "$_WIZARD_BACK" = true ] && { step=$((wizard_mode == "expert" ? 9 : 8)); continue; }
           else
             notif=$(_text_menu_back "Шаг 10: Уведомления" "Способ:" \
               "none" "Нет" "telegram" "Telegram" "ntfy" "ntfy.sh" \
               "discord" "Discord" "custom" "URL")
-            [ "$_WIZARD_BACK" = true ] && { step=$((step - 1)); continue; }
+            [ "$_WIZARD_BACK" = true ] && { step=$((wizard_mode == "expert" ? 9 : 8)); continue; }
           fi
           notif="${notif:-none}"
           case "$notif" in
@@ -1914,8 +1912,7 @@ run_wizard() {
                 TG_TOKEN=$(_whip_input "Telegram" "Токен бота" "") || TG_TOKEN=""
                 [ -n "$TG_TOKEN" ] && { TG_CHAT=$(_whip_input "Telegram" "Chat ID" "") || TG_CHAT=""; }
               else
-                TG_TOKEN=$(text_input "Токен бота" "")
-                [ -n "$TG_TOKEN" ] && TG_CHAT=$(text_input "Chat ID" "")
+                TG_TOKEN=$(text_input "Токен бота" ""); [ -n "$TG_TOKEN" ] && TG_CHAT=$(text_input "Chat ID" "")
               fi
               { [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; } && OPT_TELEGRAM=false
               ;;
@@ -1942,124 +1939,117 @@ run_wizard() {
 
       # === STEP 11: RESTORE BACKUP ===
       11)
-        if [ -z "$OPT_RESTORE_BACKUP" ]; then
-          local do_restore=false
-          if [ "$HAS_WHIPTAIL" = true ]; then
-            _whip_yesno "Шаг 11: Бэкап" "Восстановить после установки?" "--defaultno" && do_restore=true
-            [ "$_WIZARD_BACK" = true ] && { step=10; continue; }
-          else
-            _text_yesno_back "Восстановить бэкап?" "n" && do_restore=true
-            [ "$_WIZARD_BACK" = true ] && { step=10; continue; }
-          fi
-          [ "$do_restore" = true ] && {
-            local found=""
-            for d in /mnt /media /tmp /var/backups; do
-              local fb; fb=$(find "$d" -maxdepth 3 -name "ha_config_*.tar.gz" -type f 2>/dev/null | head -3)
-              [ -n "$fb" ] && found="${found}${fb}"$'\n'
-            done
-            if [ "$HAS_WHIPTAIL" = true ]; then
-              local hint=""; [ -n "$found" ] && hint="\nНайдены:\n${found}"
-              OPT_RESTORE_BACKUP=$(_whip_input "Файл бэкапа" "Путь к .tar.gz:${hint}" "") || OPT_RESTORE_BACKUP=""
-            else
-              [ -n "$found" ] && { echo -e "   Бэкапы:" >&2; echo "$found" | while IFS= read -r l; do [ -n "$l" ] && echo "   $l" >&2; done; }
-              OPT_RESTORE_BACKUP=$(text_input "Путь к .tar.gz" "")
-            fi
-            [ -n "$OPT_RESTORE_BACKUP" ] && [ ! -f "$OPT_RESTORE_BACKUP" ] && {
-              msg_warn "Файл не найден: ${OPT_RESTORE_BACKUP}"
-              OPT_RESTORE_BACKUP=""
-            }
-          }
+        OPT_RESTORE_BACKUP=""
+        local do_restore=false
+        if [ "$HAS_WHIPTAIL" = true ]; then
+          _whip_yesno "Шаг 11: Бэкап" "Восстановить после установки?" "--defaultno" && do_restore=true
+          [ "$_WIZARD_BACK" = true ] && { step=10; continue; }
+        else
+          _text_yesno_back "Восстановить бэкап?" "n" && do_restore=true
+          [ "$_WIZARD_BACK" = true ] && { step=10; continue; }
         fi
+        [ "$do_restore" = true ] && {
+          local found=""
+          for d in /mnt /media /tmp /var/backups; do
+            local fb; fb=$(find "$d" -maxdepth 3 -name "ha_config_*.tar.gz" -type f 2>/dev/null | head -3)
+            [ -n "$fb" ] && found="${found}${fb}"$'\n'
+          done
+          if [ "$HAS_WHIPTAIL" = true ]; then
+            local hint=""; [ -n "$found" ] && hint="\nНайдены:\n${found}"
+            OPT_RESTORE_BACKUP=$(_whip_input "Файл бэкапа" "Путь к .tar.gz:${hint}" "") || OPT_RESTORE_BACKUP=""
+          else
+            [ -n "$found" ] && { echo -e "   Бэкапы:" >&2; echo "$found" | while IFS= read -r l; do [ -n "$l" ] && echo "   $l" >&2; done; }
+            OPT_RESTORE_BACKUP=$(text_input "Путь к .tar.gz" "")
+          fi
+          [ -n "$OPT_RESTORE_BACKUP" ] && [ ! -f "$OPT_RESTORE_BACKUP" ] && {
+            msg_warn "Файл не найден: ${OPT_RESTORE_BACKUP}"; OPT_RESTORE_BACKUP=""
+          }
+        }
         step=12
         ;;
 
-      # === STEP 12: STATIC IP (if selected) ===
+      # === STEP 12: STATIC IP ===
       12)
-        if [ "$OPT_STATIC_IP" = true ] && [ -z "$STATIC_IP" ]; then
-          local cip; cip=$(hostname -I 2>/dev/null | awk '{print $1}') || cip=""
-          local cgw; cgw=$(ip route 2>/dev/null | awk '/default/{print $3}' | head -1) || cgw=""
-
-          while true; do
-            local r=""
-            if [ "$HAS_WHIPTAIL" = true ]; then
-              r=$(_whip_input "Шаг 12: Стат. IP" "IP-адрес" "$cip")
-            else
-              r=$(_text_input_back "Статический IP" "$cip")
-            fi
-            [ "$_WIZARD_BACK" = true ] && break
-            [ -z "$r" ] && { OPT_STATIC_IP=false; break; }
-            validate_ip "$r" && { STATIC_IP="$r"; break; }
-            msg_warn "Неверный IP"
-          done
-          [ "$_WIZARD_BACK" = true ] && { step=11; continue; }
-
-          if [ "$OPT_STATIC_IP" = true ]; then
-            while true; do
-              if [ "$HAS_WHIPTAIL" = true ]; then
-                STATIC_GW=$(_whip_input "Шлюз" "" "$cgw") || { STATIC_GW="$cgw"; break; }
-              else
-                STATIC_GW=$(text_input "Шлюз" "$cgw")
-              fi
-              validate_gw "$STATIC_GW" && break
-              msg_warn "Неверный шлюз"
-            done
-            while true; do
-              if [ "$HAS_WHIPTAIL" = true ]; then
-                STATIC_DNS=$(_whip_input "DNS" "Через запятую" "8.8.8.8,1.1.1.1") || { STATIC_DNS="8.8.8.8,1.1.1.1"; break; }
-              else
-                STATIC_DNS=$(text_input "DNS (через запятую)" "8.8.8.8,1.1.1.1")
-              fi
-              validate_dns_list "$STATIC_DNS" && break
-              msg_warn "Неверный DNS"
-            done
+        if [ "$OPT_STATIC_IP" != true ]; then step=13; continue; fi
+        STATIC_IP=""; STATIC_GW=""; STATIC_DNS=""
+        local cip; cip=$(hostname -I 2>/dev/null | awk '{print $1}') || cip=""
+        local cgw; cgw=$(ip route 2>/dev/null | awk '/default/{print $3}' | head -1) || cgw=""
+        while true; do
+          local r=""
+          if [ "$HAS_WHIPTAIL" = true ]; then
+            r=$(_whip_input "Шаг 12: Стат. IP" "IP-адрес" "$cip")
+          else
+            r=$(_text_input_back "Статический IP" "$cip")
           fi
+          [ "$_WIZARD_BACK" = true ] && break
+          [ -z "$r" ] && { OPT_STATIC_IP=false; break; }
+          validate_ip "$r" && { STATIC_IP="$r"; break; }
+          msg_warn "Неверный IP"
+        done
+        [ "$_WIZARD_BACK" = true ] && { step=11; continue; }
+        if [ "$OPT_STATIC_IP" = true ]; then
+          while true; do
+            if [ "$HAS_WHIPTAIL" = true ]; then
+              STATIC_GW=$(_whip_input "Шлюз" "" "$cgw") || { STATIC_GW="$cgw"; break; }
+            else
+              STATIC_GW=$(text_input "Шлюз" "$cgw")
+            fi
+            validate_gw "$STATIC_GW" && break; msg_warn "Неверный шлюз"
+          done
+          while true; do
+            if [ "$HAS_WHIPTAIL" = true ]; then
+              STATIC_DNS=$(_whip_input "DNS" "Через запятую" "8.8.8.8,1.1.1.1") || { STATIC_DNS="8.8.8.8,1.1.1.1"; break; }
+            else
+              STATIC_DNS=$(text_input "DNS (через запятую)" "8.8.8.8,1.1.1.1")
+            fi
+            validate_dns_list "$STATIC_DNS" && break; msg_warn "Неверный DNS"
+          done
         fi
         step=13
         ;;
 
-      # === STEP 13: REVERSE PROXY (if selected) ===
+      # === STEP 13: REVERSE PROXY ===
       13)
-        if [ "$OPT_REVERSE_PROXY" = true ] && [ -z "$PROXY_DOMAIN" ]; then
-          if [ "$HAS_WHIPTAIL" = true ]; then
-            PROXY_DOMAIN=$(_whip_input "Шаг 13: Прокси" "Домен" "")
-            [ "$_WIZARD_BACK" = true ] && { step=12; continue; }
-          else
-            PROXY_DOMAIN=$(_text_input_back "Домен прокси" "")
-            [ "$_WIZARD_BACK" = true ] && { step=12; continue; }
-          fi
-          [ -z "$PROXY_DOMAIN" ] && OPT_REVERSE_PROXY=false
+        if [ "$OPT_REVERSE_PROXY" != true ]; then step=14; continue; fi
+        PROXY_DOMAIN=""
+        if [ "$HAS_WHIPTAIL" = true ]; then
+          PROXY_DOMAIN=$(_whip_input "Шаг 13: Прокси" "Домен" "")
+          [ "$_WIZARD_BACK" = true ] && { step=12; continue; }
+        else
+          PROXY_DOMAIN=$(_text_input_back "Домен прокси" "")
+          [ "$_WIZARD_BACK" = true ] && { step=12; continue; }
         fi
+        [ -z "$PROXY_DOMAIN" ] && OPT_REVERSE_PROXY=false
         step=14
         ;;
 
-      # === STEP 14: REMOTE BACKUP (if selected) ===
+      # === STEP 14: REMOTE BACKUP ===
       14)
-        if [ "$OPT_REMOTE_BACKUP" = true ] && [ -z "$REMOTE_BACKUP_TARGET" ]; then
-          if [ "$HAS_WHIPTAIL" = true ]; then
-            REMOTE_BACKUP_TARGET=$(_whip_input "Шаг 14: Удал. бэкап" "ssh://user@host:/path" "")
-            [ "$_WIZARD_BACK" = true ] && { step=13; continue; }
-          else
-            REMOTE_BACKUP_TARGET=$(_text_input_back "ssh://user@host:/path" "")
-            [ "$_WIZARD_BACK" = true ] && { step=13; continue; }
-          fi
-          [ -z "$REMOTE_BACKUP_TARGET" ] && OPT_REMOTE_BACKUP=false
+        if [ "$OPT_REMOTE_BACKUP" != true ]; then step=15; continue; fi
+        REMOTE_BACKUP_TARGET=""
+        if [ "$HAS_WHIPTAIL" = true ]; then
+          REMOTE_BACKUP_TARGET=$(_whip_input "Шаг 14: Удал. бэкап" "ssh://user@host:/path" "")
+          [ "$_WIZARD_BACK" = true ] && { step=13; continue; }
+        else
+          REMOTE_BACKUP_TARGET=$(_text_input_back "ssh://user@host:/path" "")
+          [ "$_WIZARD_BACK" = true ] && { step=13; continue; }
         fi
+        [ -z "$REMOTE_BACKUP_TARGET" ] && OPT_REMOTE_BACKUP=false
         step=15
         ;;
 
       # === STEP 15: AUTO REBOOT ===
       15)
-        if [ "$OPT_AUTO_REBOOT" != true ]; then
-          local do_reboot=false
-          if [ "$HAS_WHIPTAIL" = true ]; then
-            _whip_yesno "Шаг 15: Перезагрузка" "Авто-перезагрузка при необходимости?\n(AppArmor может потребовать)" "" && do_reboot=true
-            [ "$_WIZARD_BACK" = true ] && { step=11; continue; }
-          else
-            _text_yesno_back "Авто-перезагрузка?" "y" && do_reboot=true
-            [ "$_WIZARD_BACK" = true ] && { step=11; continue; }
-          fi
-          [ "$do_reboot" = true ] && OPT_AUTO_REBOOT=true
+        OPT_AUTO_REBOOT=false
+        local do_reboot=false
+        if [ "$HAS_WHIPTAIL" = true ]; then
+          _whip_yesno "Шаг 15: Перезагрузка" "Авто-перезагрузка?\n(AppArmor может потребовать)" "" && do_reboot=true
+          [ "$_WIZARD_BACK" = true ] && { step=11; continue; }
+        else
+          _text_yesno_back "Авто-перезагрузка?" "y" && do_reboot=true
+          [ "$_WIZARD_BACK" = true ] && { step=11; continue; }
         fi
+        [ "$do_reboot" = true ] && OPT_AUTO_REBOOT=true
         step=100
         ;;
 
