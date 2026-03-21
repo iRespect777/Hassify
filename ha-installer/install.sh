@@ -3383,218 +3383,599 @@ do_status() {
   done
 }
 
-# ============================================================================
+# =========================================================================
 # ОПЕРАЦИИ: УДАЛЕНИЕ
-# ============================================================================
+# =========================================================================
 do_uninstall() {
-  header "УДАЛЕНИЕ HA SUPERVISED"
-  local ok=false
-  local ans=""
-  if command -v whiptail &>/dev/null; then
-    whiptail --title "Удаление" --yesno "Удалить Home Assistant Supervised?\n\nБудут удалены:\n- HA Supervised и OS-Agent\n- Все контейнеры и образы HA\n- Утилиты и cron задания\n- Настройки файрвола и SSH\n\nДанные HA и бэкапы — по запросу" 16 60 && ok=true
-  else
-    echo -en "   ${WARN} Удалить HA Supervised? (yes/no): " >&2
-    read -r ans; [ "$ans" = "yes" ] && ok=true
-  fi
-  [ "$ok" != true ] && { msg_info "Отменено."; exit 0; }
+    header "УДАЛЕНИЕ HA SUPERVISED"
 
-  # Остановка сервисов
-  msg_action "Остановка сервисов..."
-  systemctl stop hassio-supervisor hassio-apparmor 2>/dev/null || true
-
-  # Удаление контейнеров
-  msg_action "Удаление контейнеров..."
-  docker ps -a --filter "label=io.hass.type" --format '{{.Names}}' 2>/dev/null | while IFS= read -r c; do
-    docker rm -f "$c" 2>/dev/null
-  done
-  for c in homeassistant hassio_supervisor hassio_cli hassio_audio hassio_dns hassio_multicast hassio_observer; do
-    docker rm -f "$c" 2>/dev/null || true
-  done
-
-  # Удаление образов
-  msg_action "Удаление Docker-образов HA..."
-  docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -iE "homeassistant|hassio|home-assistant" | while IFS= read -r i; do
-    docker rmi -f "$i" 2>/dev/null
-  done
-
-  # Удаление Docker volumes HA
-  msg_action "Удаление Docker volumes..."
-  docker volume ls --format '{{.Name}}' 2>/dev/null | grep -iE "hassio|homeassistant" | while IFS= read -r v; do
-    docker volume rm -f "$v" 2>/dev/null
-  done
-
-  # Удаление systemd сервисов
-  msg_action "Удаление сервисов..."
-  for svc in hassio-supervisor hassio-apparmor ha-boot-check "${REBOOT_CONTINUE_SVC}"; do
-    systemctl disable "$svc" 2>/dev/null
-    systemctl stop "$svc" 2>/dev/null
-    rm -f "/etc/systemd/system/${svc}.service"
-  done
-  rm -rf /etc/systemd/system/hassio-supervisor.service.d
-  systemctl daemon-reload 2>/dev/null || true
-
-  # Удаление пакетов
-  msg_action "Удаление пакетов..."
-  dpkg --purge homeassistant-supervised os-agent 2>/dev/null || true
-
-  # Удаление утилит
-  msg_action "Удаление утилит..."
-  rm -f /usr/local/bin/ha-notify /usr/local/bin/ha-watchdog /usr/local/bin/ha-cleanup \
-    /usr/local/bin/ha-net-recovery /usr/local/bin/ha-backup /usr/local/bin/ha-restore \
-    /usr/local/bin/ha-health /usr/local/bin/ha-thermal /usr/local/bin/ha-metrics \
-    /usr/local/bin/ha-boot-check /usr/local/bin/ha-backup-remote /usr/local/bin/ha-weekly-report \
-    /usr/local/bin/ha-update-check "$HA_INFO_FILE" 2>/dev/null
-
-  # Удаление конфигов
-  msg_action "Удаление конфигов..."
-  rm -f /etc/cron.d/ha-tools \
-    /etc/udev/rules.d/99-ha-usb-power.rules \
-    /etc/ssh/sshd_config.d/99-ha-hardening.conf \
-    /etc/sysctl.d/99-ha-swap.conf \
-    /etc/systemd/journald.conf.d/ha-tuning.conf \
-    /etc/systemd/resolved.conf.d/no-mdns.conf \
-    /etc/NetworkManager/conf.d/10-ha-managed.conf \
-    /etc/NetworkManager/conf.d/10-dns-resolved.conf \
-    /etc/apt/sources.list.d/docker.list \
-    /etc/apt/keyrings/docker.asc 2>/dev/null
-
-  # ZRAM
-  rm -f /etc/default/zramswap 2>/dev/null
-  rm -rf /etc/systemd/zram-generator.conf.d 2>/dev/null
-
-  # Автообновления
-  rm -f /etc/apt/apt.conf.d/50unattended-upgrades \
-    /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null
-
-  # Fail2Ban
-  rm -f /etc/fail2ban/jail.local 2>/dev/null
-  systemctl restart fail2ban 2>/dev/null || true
-
-  # UFW правила
-  if [ -f /etc/ufw/after.rules ]; then
-    sed -i '/# BEGIN HA-INSTALLER DOCKER-USER/,/# END HA-INSTALLER DOCKER-USER/d' /etc/ufw/after.rules 2>/dev/null
-    ufw reload 2>/dev/null || true
-  fi
-
-  # Nginx
-  if [ -f /etc/nginx/sites-enabled/homeassistant ]; then
-    rm -f /etc/nginx/sites-enabled/homeassistant /etc/nginx/sites-available/homeassistant
-    systemctl reload nginx 2>/dev/null || true
-  fi
-
-  # Avahi — восстановить дефолтный конфиг
-  if [ -f /etc/avahi/avahi-daemon.conf ] && grep -q "host-name=homeassistant" /etc/avahi/avahi-daemon.conf 2>/dev/null; then
-    rm -f /etc/avahi/avahi-daemon.conf
-    systemctl restart avahi-daemon 2>/dev/null || true
-    msg_dim "Avahi конфиг удалён (будет использован дефолтный)"
-  fi
-
-  # === ВОПРОСЫ ПОЛЬЗОВАТЕЛЮ (до удаления $HA_INSTALLER_DIR) ===
-
-  # Swap файл
-  if [ -f /swapfile ]; then
-    echo -en "   ${WARN} Удалить swap-файл? (yes/no): " >&2
-    read -r ans
-    if [ "$ans" = "yes" ]; then
-      swapoff /swapfile 2>/dev/null
-      rm -f /swapfile
-      sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null
-      msg_ok "Swap-файл удалён"
+    # === ВЫБОР РЕЖИМА ===
+    local mode="standard"
+    if command -v whiptail &>/dev/null; then
+        mode=$(whiptail --title "Режим удаления" --menu \
+            "Выберите режим удаления:" 16 65 3 \
+            "standard" "Стандартный (удалить HA, оставить Docker и сеть)" \
+            "full"     "Полный (удалить ВСЁ для чистой переустановки)" \
+            "cancel"   "Отмена" \
+            3>&1 1>&2 2>&3) || { msg_info "Отменено."; exit 0; }
+    else
+        mode=$(text_menu "Режим удаления" "Выберите:" \
+            "standard" "Стандартный (оставить Docker и сеть)" \
+            "full"     "Полный (для чистой переустановки)" \
+            "cancel"   "Отмена") || { msg_info "Отменено."; exit 0; }
     fi
-  fi
+    [ "$mode" = "cancel" ] && { msg_info "Отменено."; exit 0; }
 
-  # Hostname
-  if [ "$(hostname)" = "homeassistant" ]; then
-    echo -en "   ${WARN} Вернуть имя хоста? (введите новое или Enter для пропуска): " >&2
-    read -r ans
-    if [ -n "$ans" ]; then
-      hostnamectl set-hostname "$ans" 2>/dev/null
-      msg_ok "Имя хоста: ${ans}"
+    # === ПОДТВЕРЖДЕНИЕ ===
+    local ok=false
+    local ans=""
+
+    if [ "$mode" = "full" ]; then
+        if command -v whiptail &>/dev/null; then
+            whiptail --title "ПОЛНОЕ УДАЛЕНИЕ" --yesno \
+                "ВНИМАНИЕ! Будет удалено ВСЁ:\n\n\
+- Home Assistant Supervised и OS-Agent\n\
+- ВСЕ контейнеры, образы, volumes и сети Docker\n\
+- Docker CE полностью\n\
+- Все данные HA (/usr/share/hassio и др.)\n\
+- Все бэкапы\n\
+- Все утилиты, конфиги, логи\n\
+- Настройки сети (NetworkManager → ifupdown)\n\
+- AppArmor параметры загрузчика\n\
+- Swap-файл\n\
+- Файрвол (UFW сброс)\n\n\
+Система вернётся к состоянию до установки.\n\
+Переустановка будет как на чистую систему.\n\n\
+Продолжить?" 28 65 && ok=true
+        else
+            echo "" >&2
+            echo -e " ${RED}${BOLD}ПОЛНОЕ УДАЛЕНИЕ${NC}" >&2
+            echo -e " Будет удалено ВСЁ включая Docker, данные, бэкапы, сеть." >&2
+            echo -e " Система вернётся к состоянию до установки." >&2
+            echo "" >&2
+            echo -en " ${WARN} Введите 'УДАЛИТЬ ВСЁ' для подтверждения: " >&2
+            read -r ans
+            [ "$ans" = "УДАЛИТЬ ВСЁ" ] && ok=true
+        fi
+    else
+        if command -v whiptail &>/dev/null; then
+            whiptail --title "Удаление" --yesno \
+                "Удалить Home Assistant Supervised?\n\n\
+Будут удалены:\n\
+- HA Supervised и OS-Agent\n\
+- Все контейнеры и образы HA\n\
+- Утилиты и cron задания\n\
+- Настройки файрвола и SSH\n\n\
+Docker и сеть останутся.\n\
+Данные HA и бэкапы — по запросу." 18 60 && ok=true
+        else
+            echo -en " ${WARN} Удалить HA Supervised? (yes/no): " >&2
+            read -r ans
+            [ "$ans" = "yes" ] && ok=true
+        fi
     fi
-  fi
+    [ "$ok" != true ] && { msg_info "Отменено."; exit 0; }
 
-  # Восстановление fstab (ДО удаления $HA_INSTALLER_DIR)
-  if [ -f "${BACKUP_DIR}/fstab.bak" ]; then
-    echo -en "   ${WARN} Восстановить оригинальный fstab? (yes/no): " >&2
-    read -r ans
-    if [ "$ans" = "yes" ]; then
-      cp "${BACKUP_DIR}/fstab.bak" /etc/fstab 2>/dev/null
-      msg_ok "fstab восстановлен"
+    # Загрузить конфиг (для OPT_DATA_DIR и других переменных)
+    load_config
+
+    # =======================================================
+    # ОБЩАЯ ЧАСТЬ (оба режима)
+    # =======================================================
+
+    # --- Остановка сервисов ---
+    msg_action "Остановка сервисов..."
+    systemctl stop hassio-supervisor hassio-apparmor 2>/dev/null || true
+
+    # --- Удаление контейнеров HA ---
+    msg_action "Удаление контейнеров HA..."
+    if command -v docker &>/dev/null; then
+        docker ps -a --filter "label=io.hass.type" --format '{{.Names}}' 2>/dev/null | while IFS= read -r c; do
+            docker rm -f "$c" 2>/dev/null
+        done
+        for c in homeassistant hassio_supervisor hassio_cli hassio_audio hassio_dns hassio_multicast hassio_observer; do
+            docker rm -f "$c" 2>/dev/null || true
+        done
+
+        # --- Удаление Docker-образов HA ---
+        msg_action "Удаление Docker-образов HA..."
+        docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -iE "homeassistant|hassio|home-assistant" | while IFS= read -r i; do
+            docker rmi -f "$i" 2>/dev/null
+        done
+
+        # --- Удаление Docker volumes HA ---
+        msg_action "Удаление Docker volumes HA..."
+        docker volume ls --format '{{.Name}}' 2>/dev/null | grep -iE "hassio|homeassistant|home.assistant" | while IFS= read -r v; do
+            docker volume rm -f "$v" 2>/dev/null
+        done
+        # Осиротевшие volumes (проверка по содержимому)
+        docker volume ls -f dangling=true --format '{{.Name}}' 2>/dev/null | while IFS= read -r v; do
+            local mp=""
+            mp=$(docker volume inspect "$v" --format '{{.Mountpoint}}' 2>/dev/null)
+            if [ -n "$mp" ] && [ -d "$mp" ] && ls "$mp" 2>/dev/null | grep -qiE "hassio|homeassistant|configuration.yaml"; then
+                docker volume rm -f "$v" 2>/dev/null
+                msg_dim "Удалён volume: ${v}"
+            fi
+        done
+
+        # --- Удаление Docker сетей HA ---
+        msg_action "Удаление Docker сетей HA..."
+        docker network ls --format '{{.Name}}' 2>/dev/null | grep -iE "hassio|homeassistant|supervisor" | while IFS= read -r n; do
+            docker network rm "$n" 2>/dev/null || true
+        done
     fi
-  fi
 
-  # Восстановление os-release (ДО удаления $HA_INSTALLER_DIR)
-  msg_action "Восстановление os-release..."
-  restore_os_release
-  rm -f "$FAKED_OS_RELEASE" 2>/dev/null
+    # --- Удаление systemd сервисов ---
+    msg_action "Удаление сервисов..."
+    for svc in hassio-supervisor hassio-apparmor ha-boot-check "${REBOOT_CONTINUE_SVC}"; do
+        systemctl disable "$svc" 2>/dev/null
+        systemctl stop "$svc" 2>/dev/null
+        rm -f "/etc/systemd/system/${svc}.service"
+    done
+    rm -rf /etc/systemd/system/hassio-supervisor.service.d
+    systemctl daemon-reload 2>/dev/null || true
 
-  # Данные HA
-  if [ -d "$HASSIO_DIR" ] || [ -L "$HASSIO_DIR" ]; then
-    echo -en "   ${WARN} Удалить данные HA (${HASSIO_DIR})? (yes/no): " >&2
-    read -r ans
-    if [ "$ans" = "yes" ]; then
-      if [ -L "$HASSIO_DIR" ]; then
-        local target; target=$(readlink -f "$HASSIO_DIR")
-        rm -f "$HASSIO_DIR"
-        rm -rf "$target"
-        msg_ok "Данные удалены: ${target}"
-      else
-        rm -rf "$HASSIO_DIR"
-        msg_ok "Данные удалены: ${HASSIO_DIR}"
-      fi
-      rm -rf "${HASSIO_DIR}.bak" 2>/dev/null
+    # --- Удаление пакетов HA ---
+    msg_action "Удаление пакетов HA..."
+    dpkg --purge homeassistant-supervised os-agent 2>/dev/null || true
+
+    # --- Удаление утилит ---
+    msg_action "Удаление утилит..."
+    rm -f /usr/local/bin/ha-notify /usr/local/bin/ha-watchdog /usr/local/bin/ha-cleanup \
+        /usr/local/bin/ha-net-recovery /usr/local/bin/ha-backup /usr/local/bin/ha-restore \
+        /usr/local/bin/ha-health /usr/local/bin/ha-thermal /usr/local/bin/ha-metrics \
+        /usr/local/bin/ha-boot-check /usr/local/bin/ha-backup-remote /usr/local/bin/ha-weekly-report \
+        /usr/local/bin/ha-update-check "$HA_INFO_FILE" 2>/dev/null
+
+    # --- Удаление конфигов установщика ---
+    msg_action "Удаление конфигов..."
+    rm -f /etc/cron.d/ha-tools \
+        /etc/udev/rules.d/99-ha-usb-power.rules \
+        /etc/ssh/sshd_config.d/99-ha-hardening.conf \
+        /etc/sysctl.d/99-ha-swap.conf \
+        /etc/systemd/journald.conf.d/ha-tuning.conf \
+        /etc/systemd/resolved.conf.d/no-mdns.conf \
+        /etc/NetworkManager/conf.d/10-ha-managed.conf \
+        /etc/NetworkManager/conf.d/10-dns-resolved.conf 2>/dev/null
+
+    # --- ZRAM ---
+    rm -f /etc/default/zramswap 2>/dev/null
+    rm -rf /etc/systemd/zram-generator.conf.d 2>/dev/null
+
+    # --- Автообновления ---
+    rm -f /etc/apt/apt.conf.d/50unattended-upgrades \
+        /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null
+
+    # --- Fail2Ban ---
+    rm -f /etc/fail2ban/jail.local 2>/dev/null
+    systemctl restart fail2ban 2>/dev/null || true
+
+    # --- UFW DOCKER-USER правила ---
+    if [ -f /etc/ufw/after.rules ]; then
+        sed -i '/# BEGIN HA-INSTALLER DOCKER-USER/,/# END HA-INSTALLER DOCKER-USER/d' /etc/ufw/after.rules 2>/dev/null
+        ufw reload 2>/dev/null || true
     fi
-  fi
 
-  # Docker на внешнем диске
-  if [ -L /var/lib/docker ]; then
-    local docker_target; docker_target=$(readlink -f /var/lib/docker)
-    echo -en "   ${WARN} Docker на внешнем диске (${docker_target}). Удалить? (yes/no): " >&2
-    read -r ans
-    if [ "$ans" = "yes" ]; then
-      systemctl stop docker 2>/dev/null || true
-      rm -f /var/lib/docker
-      rm -rf "$docker_target"
-      [ -d /var/lib/docker.bak ] && mv /var/lib/docker.bak /var/lib/docker
-      systemctl disable docker 2>/dev/null || true
-      msg_ok "Docker данные удалены"
+    # --- Nginx ---
+    if [ -f /etc/nginx/sites-enabled/homeassistant ]; then
+        rm -f /etc/nginx/sites-enabled/homeassistant /etc/nginx/sites-available/homeassistant
+        systemctl reload nginx 2>/dev/null || true
     fi
-  fi
 
-  # Бэкапы
-  if [ -d "$HA_BACKUP_DIR" ]; then
-    echo -en "   ${WARN} Удалить бэкапы (${HA_BACKUP_DIR})? (yes/no): " >&2
-    read -r ans
-    [ "$ans" = "yes" ] && { rm -rf "$HA_BACKUP_DIR"; msg_ok "Бэкапы удалены"; }
-  fi
+    # --- Avahi ---
+    if [ -f /etc/avahi/avahi-daemon.conf ] && grep -q "host-name=homeassistant" /etc/avahi/avahi-daemon.conf 2>/dev/null; then
+        rm -f /etc/avahi/avahi-daemon.conf
+        systemctl restart avahi-daemon 2>/dev/null || true
+        msg_dim "Avahi конфиг удалён"
+    fi
 
-  # Удаление данных установщика (ПОСЛЕ всех восстановлений из backup)
-  rm -rf "$HA_INSTALLER_DIR" /root/.ha_install_state /root/.ha_install_backup 2>/dev/null
+    # --- Prometheus метрики ---
+    rm -f /var/lib/prometheus/node-exporter/ha.prom 2>/dev/null
 
-  # Перезапуск изменённых сервисов
-  msg_action "Перезапуск сервисов..."
-  systemctl restart systemd-journald 2>/dev/null || true
-  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
-  sysctl --system >/dev/null 2>&1 || true
-  systemctl restart NetworkManager 2>/dev/null || true
+    # --- Восстановление os-release (ДО удаления $HA_INSTALLER_DIR) ---
+    msg_action "Восстановление os-release..."
+    restore_os_release
+    rm -f "$FAKED_OS_RELEASE" 2>/dev/null
 
-  # Очистка Docker
-  msg_action "Очистка Docker..."
-  docker system prune -af 2>/dev/null || true
-  docker volume prune -f 2>/dev/null || true
-  rm -f "$GRACE_MARKER" 2>/dev/null
+    # =======================================================
+    # СТАНДАРТНЫЙ РЕЖИМ
+    # =======================================================
+    if [ "$mode" = "standard" ]; then
 
-  separator
-  msg_ok "Удаление завершено"
-  echo ""
-  msg_info "Не удалено (может быть нужно системе):"
-  msg_dim "- Docker (docker-ce): sudo apt remove docker-ce docker-ce-cli containerd.io"
-  msg_dim "- AppArmor в загрузчике (apparmor=1 security=apparmor)"
-  msg_dim "- Пакеты (apparmor, network-manager, avahi-daemon и др.)"
-  msg_dim "- NetworkManager как менеджер сети (вместо ifupdown)"
-  echo ""
+        # --- Данные HA (/usr/share/hassio) ---
+        if [ -d "$HASSIO_DIR" ] || [ -L "$HASSIO_DIR" ]; then
+            echo -en " ${WARN} Удалить данные HA (${HASSIO_DIR})? (yes/no): " >&2
+            read -r ans
+            if [ "$ans" = "yes" ]; then
+                local target=""
+                if [ -L "$HASSIO_DIR" ]; then
+                    target=$(readlink -f "$HASSIO_DIR")
+                    rm -f "$HASSIO_DIR"
+                    rm -rf "$target"
+                    msg_ok "Данные удалены: ${target}"
+                else
+                    rm -rf "$HASSIO_DIR"
+                    msg_ok "Данные удалены: ${HASSIO_DIR}"
+                fi
+                rm -rf "${HASSIO_DIR}.bak" 2>/dev/null
+            fi
+        fi
 
-  header "УДАЛЕНО"
+        # --- Дополнительные пути данных HA ---
+        local extra_paths=(
+            "/var/lib/homeassistant"
+            "/home/homeassistant"
+            "/root/.homeassistant"
+        )
+        for ep in "${extra_paths[@]}"; do
+            if [ -d "$ep" ]; then
+                local ep_size=""
+                ep_size=$(du -sh "$ep" 2>/dev/null | awk '{print $1}')
+                echo -en " ${WARN} Найден ${ep} (${ep_size:-?}). Удалить? (yes/no): " >&2
+                read -r ans
+                [ "$ans" = "yes" ] && { rm -rf "$ep"; msg_ok "Удалён: ${ep}"; }
+            fi
+        done
+
+        # --- Данные на внешнем диске ---
+        if [ -n "${OPT_DATA_DIR:-}" ] && [ -d "${OPT_DATA_DIR:-}/hassio" ]; then
+            echo -en " ${WARN} Данные на внешнем диске (${OPT_DATA_DIR}/hassio). Удалить? (yes/no): " >&2
+            read -r ans
+            [ "$ans" = "yes" ] && { rm -rf "${OPT_DATA_DIR}/hassio"; msg_ok "Удалены: ${OPT_DATA_DIR}/hassio"; }
+        fi
+
+        # --- Docker на внешнем диске ---
+        local docker_target=""
+        if [ -L /var/lib/docker ]; then
+            docker_target=$(readlink -f /var/lib/docker)
+            echo -en " ${WARN} Docker на внешнем диске (${docker_target}). Удалить? (yes/no): " >&2
+            read -r ans
+            if [ "$ans" = "yes" ]; then
+                systemctl stop docker 2>/dev/null || true
+                rm -f /var/lib/docker
+                rm -rf "$docker_target"
+                [ -d /var/lib/docker.bak ] && mv /var/lib/docker.bak /var/lib/docker
+                systemctl disable docker 2>/dev/null || true
+                msg_ok "Docker данные удалены"
+            fi
+        fi
+
+        # --- Swap файл ---
+        if [ -f /swapfile ]; then
+            echo -en " ${WARN} Удалить swap-файл? (yes/no): " >&2
+            read -r ans
+            if [ "$ans" = "yes" ]; then
+                swapoff /swapfile 2>/dev/null
+                rm -f /swapfile
+                sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null
+                msg_ok "Swap-файл удалён"
+            fi
+        fi
+
+        # --- Hostname ---
+        if [ "$(hostname 2>/dev/null)" = "homeassistant" ]; then
+            echo -en " ${WARN} Вернуть имя хоста? (введите новое или Enter для пропуска): " >&2
+            read -r ans
+            if [ -n "$ans" ]; then
+                hostnamectl set-hostname "$ans" 2>/dev/null
+                msg_ok "Имя хоста: ${ans}"
+            fi
+        fi
+
+        # --- fstab ---
+        if [ -f "${BACKUP_DIR}/fstab.bak" ]; then
+            echo -en " ${WARN} Восстановить оригинальный fstab? (yes/no): " >&2
+            read -r ans
+            if [ "$ans" = "yes" ]; then
+                cp "${BACKUP_DIR}/fstab.bak" /etc/fstab 2>/dev/null
+                msg_ok "fstab восстановлен"
+            fi
+        fi
+
+        # --- Бэкапы ---
+        if [ -d "$HA_BACKUP_DIR" ]; then
+            echo -en " ${WARN} Удалить бэкапы (${HA_BACKUP_DIR})? (yes/no): " >&2
+            read -r ans
+            [ "$ans" = "yes" ] && { rm -rf "$HA_BACKUP_DIR"; msg_ok "Бэкапы удалены"; }
+        fi
+
+        # --- Пользователь homeassistant ---
+        if id homeassistant &>/dev/null; then
+            echo -en " ${WARN} Удалить пользователя homeassistant? (yes/no): " >&2
+            read -r ans
+            if [ "$ans" = "yes" ]; then
+                local ha_home=""
+                ha_home=$(getent passwd homeassistant 2>/dev/null | cut -d: -f6)
+                userdel -r homeassistant 2>/dev/null || userdel homeassistant 2>/dev/null || true
+                [ -n "$ha_home" ] && [ -d "$ha_home" ] && rm -rf "$ha_home"
+                msg_ok "Пользователь homeassistant удалён"
+            fi
+        fi
+
+        # --- Логи ---
+        echo -en " ${WARN} Удалить логи установщика? (yes/no): " >&2
+        read -r ans
+        [ "$ans" = "yes" ] && { rm -f /var/log/ha_install_*.log /var/log/ha_install_reboot.log 2>/dev/null; msg_ok "Логи удалены"; }
+
+        # --- Данные установщика (ПОСЛЕ всех восстановлений из backup) ---
+        rm -rf "$HA_INSTALLER_DIR" /root/.ha_install_state /root/.ha_install_backup 2>/dev/null
+
+        # --- Перезапуск сервисов ---
+        msg_action "Перезапуск сервисов..."
+        systemctl restart systemd-journald 2>/dev/null || true
+        systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+        sysctl --system >/dev/null 2>&1 || true
+        systemctl restart NetworkManager 2>/dev/null || true
+
+        # --- Очистка Docker ---
+        if command -v docker &>/dev/null; then
+            msg_action "Очистка Docker..."
+            docker system prune -af 2>/dev/null || true
+            docker volume prune -f 2>/dev/null || true
+        fi
+
+        rm -f "$GRACE_MARKER" 2>/dev/null
+
+        separator
+        msg_ok "Стандартное удаление завершено"
+        echo ""
+        msg_info "Не удалено (может быть нужно системе):"
+        msg_dim "- Docker (docker-ce): sudo apt purge docker-ce docker-ce-cli containerd.io"
+        msg_dim "- AppArmor в загрузчике (apparmor=1 security=apparmor)"
+        msg_dim "- Пакеты (apparmor, network-manager, avahi-daemon и др.)"
+        msg_dim "- NetworkManager как менеджер сети (вместо ifupdown)"
+        msg_dim "- /usr/local/bin/ha-install (скрипт установщика)"
+        echo ""
+
+    # =======================================================
+    # ПОЛНЫЙ РЕЖИМ
+    # =======================================================
+    elif [ "$mode" = "full" ]; then
+
+        msg_action "Полная очистка..."
+
+        # --- Данные HA (/usr/share/hassio) ---
+        local target=""
+        if [ -L "$HASSIO_DIR" ]; then
+            target=$(readlink -f "$HASSIO_DIR")
+            rm -f "$HASSIO_DIR"
+            rm -rf "$target"
+            msg_ok "Данные удалены: ${target}"
+        elif [ -d "$HASSIO_DIR" ]; then
+            rm -rf "$HASSIO_DIR"
+            msg_ok "Данные удалены: ${HASSIO_DIR}"
+        fi
+        rm -rf "${HASSIO_DIR}.bak" 2>/dev/null
+
+        # --- Дополнительные пути данных HA ---
+        msg_action "Поиск дополнительных данных HA..."
+        local extra_paths=(
+            "/var/lib/homeassistant"
+            "/home/homeassistant"
+            "/root/.homeassistant"
+        )
+        for ep in "${extra_paths[@]}"; do
+            if [ -d "$ep" ]; then
+                local ep_size=""
+                ep_size=$(du -sh "$ep" 2>/dev/null | awk '{print $1}')
+                msg_warn "Найден: ${ep} (${ep_size:-?})"
+                rm -rf "$ep"
+                msg_ok "Удалён: ${ep}"
+            fi
+        done
+
+        # --- Данные на внешнем диске ---
+        if [ -n "${OPT_DATA_DIR:-}" ] && [ -d "${OPT_DATA_DIR:-}" ]; then
+            if [ -d "${OPT_DATA_DIR}/hassio" ]; then
+                rm -rf "${OPT_DATA_DIR}/hassio"
+                msg_ok "Удалены данные: ${OPT_DATA_DIR}/hassio"
+            fi
+            if [ -d "${OPT_DATA_DIR}/docker" ]; then
+                rm -rf "${OPT_DATA_DIR}/docker"
+                msg_ok "Удалён Docker: ${OPT_DATA_DIR}/docker"
+            fi
+        fi
+
+        # --- Docker на внешнем диске ---
+        local docker_target=""
+        if [ -L /var/lib/docker ]; then
+            docker_target=$(readlink -f /var/lib/docker)
+            rm -f /var/lib/docker
+            rm -rf "$docker_target"
+            msg_ok "Docker данные удалены: ${docker_target}"
+        fi
+        rm -rf /var/lib/docker.bak 2>/dev/null
+
+        # --- Бэкапы ---
+        rm -rf "$HA_BACKUP_DIR"
+        msg_ok "Бэкапы удалены"
+
+        # --- Пользователь homeassistant ---
+        if id homeassistant &>/dev/null; then
+            local ha_home=""
+            ha_home=$(getent passwd homeassistant 2>/dev/null | cut -d: -f6)
+            userdel -r homeassistant 2>/dev/null || userdel homeassistant 2>/dev/null || true
+            [ -n "$ha_home" ] && [ -d "$ha_home" ] && rm -rf "$ha_home"
+            msg_ok "Пользователь homeassistant удалён"
+        fi
+
+        # --- Swap ---
+        if [ -f /swapfile ]; then
+            swapoff /swapfile 2>/dev/null
+            rm -f /swapfile
+            sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null
+            msg_ok "Swap-файл удалён"
+        fi
+
+        # --- Hostname ---
+        if [ "$(hostname 2>/dev/null)" = "homeassistant" ]; then
+            if [ -f "${BACKUP_DIR}/hostname.bak" ]; then
+                hostnamectl set-hostname "$(cat "${BACKUP_DIR}/hostname.bak")" 2>/dev/null
+                msg_ok "Имя хоста восстановлено: $(hostname)"
+            else
+                hostnamectl set-hostname "debian" 2>/dev/null
+                msg_ok "Имя хоста: debian (по умолчанию)"
+            fi
+        fi
+
+        # --- fstab ---
+        if [ -f "${BACKUP_DIR}/fstab.bak" ]; then
+            cp "${BACKUP_DIR}/fstab.bak" /etc/fstab 2>/dev/null
+            msg_ok "fstab восстановлен"
+        fi
+
+        # --- Docker CE полностью ---
+        msg_action "Удаление Docker CE..."
+        systemctl stop docker docker.socket containerd 2>/dev/null || true
+        systemctl disable docker docker.socket containerd 2>/dev/null || true
+        apt-get purge -y docker-ce docker-ce-cli containerd.io \
+            docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
+        apt-get autoremove -y 2>/dev/null || true
+        rm -rf /var/lib/docker /var/lib/containerd 2>/dev/null
+        rm -f /etc/docker/daemon.json 2>/dev/null
+        rmdir /etc/docker 2>/dev/null || true
+        rm -f /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.asc 2>/dev/null
+        msg_ok "Docker CE удалён"
+
+        # --- AppArmor в загрузчике ---
+        msg_action "Очистка AppArmor из загрузчика..."
+        for f in /boot/armbianEnv.txt /boot/uEnv.txt /boot/extlinux/extlinux.conf; do
+            [ -f "$f" ] || continue
+            if grep -q "apparmor=1" "$f" 2>/dev/null; then
+                local bak="${BACKUP_DIR}/$(basename "$f").bak"
+                if [ -f "$bak" ]; then
+                    cp "$bak" "$f" 2>/dev/null
+                    msg_ok "$(basename "$f") восстановлен из бэкапа"
+                else
+                    # Удалить параметры вручную
+                    sed -i 's/ apparmor=1 security=apparmor//g' "$f" 2>/dev/null
+                    sed -i 's/ apparmor=1//g; s/ security=apparmor//g' "$f" 2>/dev/null
+                    # Очистить пустую extraargs
+                    sed -i '/^extraargs=$/d' "$f" 2>/dev/null
+                    msg_ok "$(basename "$f") очищен"
+                fi
+            fi
+        done
+
+        # --- Сеть: вернуть ifupdown ---
+        msg_action "Восстановление сети..."
+
+        # Восстановить /etc/network/interfaces
+        if [ -f "${BACKUP_DIR}/interfaces.bak" ]; then
+            cp "${BACKUP_DIR}/interfaces.bak" /etc/network/interfaces 2>/dev/null
+            msg_ok "interfaces восстановлен из бэкапа"
+        else
+            # Минимальный рабочий конфиг
+            local iface=""
+            iface=$(ip -o link show 2>/dev/null | awk -F': ' '!/lo/{print $2; exit}')
+            cat > /etc/network/interfaces << IFEOF
+source /etc/network/interfaces.d/*
+auto lo
+iface lo inet loopback
+
+auto ${iface:-eth0}
+iface ${iface:-eth0} inet dhcp
+IFEOF
+            msg_ok "interfaces создан (DHCP на ${iface:-eth0})"
+        fi
+
+        # Восстановить resolv.conf
+        if [ -f "${BACKUP_DIR}/resolv.conf.bak" ]; then
+            rm -f /etc/resolv.conf 2>/dev/null
+            cp "${BACKUP_DIR}/resolv.conf.bak" /etc/resolv.conf 2>/dev/null
+            msg_ok "resolv.conf восстановлен"
+        else
+            rm -f /etc/resolv.conf 2>/dev/null
+            echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" > /etc/resolv.conf
+            msg_ok "resolv.conf создан (8.8.8.8, 1.1.1.1)"
+        fi
+
+        # Переключение на ifupdown
+        systemctl stop NetworkManager 2>/dev/null || true
+        systemctl disable NetworkManager 2>/dev/null || true
+        systemctl stop systemd-resolved 2>/dev/null || true
+        systemctl disable systemd-resolved 2>/dev/null || true
+        systemctl enable networking 2>/dev/null || true
+        systemctl restart networking 2>/dev/null || true
+        msg_ok "Сеть: ifupdown"
+
+        # Проверить что сеть работает
+        local net_wait=0
+        while [ $net_wait -lt 15 ]; do
+            local check_ip=""
+            check_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+            [ -n "$check_ip" ] && { msg_ok "Сеть работает: ${check_ip}"; break; }
+            sleep 3; net_wait=$((net_wait + 3))
+        done
+        if [ $net_wait -ge 15 ]; then
+            msg_warn "Сеть может не работать. После перезагрузки проверьте:"
+            msg_dim "  sudo systemctl restart networking"
+            msg_dim "  sudo ifup ${iface:-eth0}"
+        fi
+
+        # --- UFW: полный сброс ---
+        msg_action "Сброс файрвола..."
+        ufw --force disable 2>/dev/null || true
+        ufw --force reset 2>/dev/null || true
+        msg_ok "UFW сброшен и отключён"
+
+        # --- SSH: восстановление ---
+        if [ -f "${BACKUP_DIR}/sshd_config.bak" ]; then
+            cp "${BACKUP_DIR}/sshd_config.bak" /etc/ssh/sshd_config 2>/dev/null
+            msg_ok "sshd_config восстановлен"
+        fi
+        rm -f /etc/ssh/sshd_config.d/99-ha-hardening.conf 2>/dev/null
+        systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+
+        # --- ha-install из PATH ---
+        rm -f "$SAFE_SCRIPT_PATH" 2>/dev/null
+        msg_ok "ha-install удалён из PATH"
+
+        # --- Логи ---
+        rm -f /var/log/ha_install_*.log /var/log/ha_install_reboot.log 2>/dev/null
+        msg_ok "Логи удалены"
+
+        # --- Данные установщика (ПОСЛЕДНЕЕ — после всех восстановлений) ---
+        rm -rf "$HA_INSTALLER_DIR" /root/.ha_install_state /root/.ha_install_backup 2>/dev/null
+        msg_ok "Данные установщика удалены"
+
+        # --- Перезапуск сервисов ---
+        msg_action "Перезапуск сервисов..."
+        systemctl restart systemd-journald 2>/dev/null || true
+        systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+        sysctl --system >/dev/null 2>&1 || true
+
+        rm -f "$GRACE_MARKER" 2>/dev/null
+
+        separator
+        msg_ok "ПОЛНОЕ УДАЛЕНИЕ ЗАВЕРШЕНО"
+        echo ""
+        msg_info "Система очищена для переустановки."
+        msg_info "Можно запускать установщик заново."
+        echo ""
+        msg_warn "Рекомендуется перезагрузка: sudo reboot"
+        echo ""
+
+        # Показать оставшиеся зависимости
+        msg_info "Установленные зависимости (можно удалить вручную):"
+        local dep_pkgs="apparmor avahi-daemon bluez network-manager fail2ban ufw"
+        dep_pkgs+=" unattended-upgrades nginx certbot python3-certbot-nginx"
+        dep_pkgs+=" zram-tools systemd-zram-generator"
+        dep_pkgs+=" linux-cpupower cpufrequtils"
+        local installed_deps=""
+        for p in $dep_pkgs; do
+            is_pkg_installed "$p" && installed_deps="${installed_deps} ${p}"
+        done
+        if [ -n "$installed_deps" ]; then
+            msg_dim "  sudo apt purge${installed_deps}"
+            msg_dim "  sudo apt autoremove"
+        else
+            msg_dim "  Нет установленных зависимостей"
+        fi
+        echo ""
+    fi
+
+    header "УДАЛЕНО"
 }
 
 # ============================================================================
