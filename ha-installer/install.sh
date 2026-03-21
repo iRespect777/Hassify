@@ -3616,7 +3616,7 @@ Docker и сеть останутся.\n\
                 ep_size=$(du -sh "$ep" 2>/dev/null | awk '{print $1}')
                 echo -en " ${WARN} Найден ${ep} (${ep_size:-?}). Удалить? (yes/no): " >&2
                 read -r ans
-                [ "$ans" = "yes" ] && { rm -rf "$ep"; msg_ok "Удалён: ${ep}"; }
+                case "$ans" in yes|y|Y|д|Д|да) rm -rf "$ep"; msg_ok "Удалён: ${ep}" ;; esac
             fi
         done
 
@@ -3624,7 +3624,7 @@ Docker и сеть останутся.\n\
         if [ -n "${OPT_DATA_DIR:-}" ] && [ -d "${OPT_DATA_DIR:-}/hassio" ]; then
             echo -en " ${WARN} Данные на внешнем диске (${OPT_DATA_DIR}/hassio). Удалить? (yes/no): " >&2
             read -r ans
-            [ "$ans" = "yes" ] && { rm -rf "${OPT_DATA_DIR}/hassio"; msg_ok "Удалены: ${OPT_DATA_DIR}/hassio"; }
+            case "$ans" in yes|y|Y|д|Д|да) rm -rf "${OPT_DATA_DIR}/hassio"; msg_ok "Удалены: ${OPT_DATA_DIR}/hassio" ;; esac
         fi
 
         # --- Docker на внешнем диске ---
@@ -3679,7 +3679,7 @@ Docker и сеть останутся.\n\
         if [ -d "$HA_BACKUP_DIR" ]; then
             echo -en " ${WARN} Удалить бэкапы (${HA_BACKUP_DIR})? (yes/no): " >&2
             read -r ans
-            [ "$ans" = "yes" ] && { rm -rf "$HA_BACKUP_DIR"; msg_ok "Бэкапы удалены"; }
+            case "$ans" in yes|y|Y|д|Д|да) rm -rf "$HA_BACKUP_DIR"; msg_ok "Бэкапы удалены" ;; esac
         fi
 
         # --- Пользователь homeassistant ---
@@ -3698,7 +3698,7 @@ Docker и сеть останутся.\n\
         # --- Логи ---
         echo -en " ${WARN} Удалить логи установщика? (yes/no): " >&2
         read -r ans
-        [ "$ans" = "yes" ] && { rm -f /var/log/ha_install_*.log /var/log/ha_install_reboot.log 2>/dev/null; msg_ok "Логи удалены"; }
+        case "$ans" in yes|y|Y|д|Д|да) rm -f /var/log/ha_install_*.log /var/log/ha_install_reboot.log 2>/dev/null; msg_ok "Логи удалены" ;; esac
 
         # --- Данные установщика (ПОСЛЕ всех восстановлений из backup) ---
         rm -rf "$HA_INSTALLER_DIR" /root/.ha_install_state /root/.ha_install_backup 2>/dev/null
