@@ -3392,6 +3392,17 @@ do_status() {
 do_uninstall() {
     header "УДАЛЕНИЕ HA SUPERVISED"
 
+    # --- Локальная функция подтверждения ---
+    _confirm() {
+        local prompt="$1"
+        echo -en " ${WARN} ${prompt} (yes/y/д): " >&2
+        local a; read -r a
+        case "$a" in
+            yes|y|Y|д|Д|да|Да) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+
     # === ВЫБОР РЕЖИМА ===
     local mode="standard"
     if command -v whiptail &>/dev/null; then
@@ -3452,9 +3463,7 @@ do_uninstall() {
 Docker и сеть останутся.\n\
 Данные HA и бэкапы — по запросу." 18 60 && ok=true
         else
-            echo -en " ${WARN} Удалить HA Supervised? (yes/no): " >&2
-            read -r ans
-            [ "$ans" = "yes" ] && ok=true
+            _confirm "Удалить HA Supervised?" && ok=true
         fi
     fi
     [ "$ok" != true ] && { msg_info "Отменено."; exit 0; }
@@ -3471,8 +3480,8 @@ Docker и сеть останутся.\n\
     systemctl stop hassio-supervisor hassio-apparmor 2>/dev/null || true
 
     # --- Удаление контейнеров HA ---
-    msg_action "Удаление контейнеров HA..."
     if command -v docker &>/dev/null; then
+        msg_action "Удаление контейнеров HA..."
         docker ps -a --filter "label=io.hass.type" --format '{{.Names}}' 2>/dev/null | while IFS= read -r c; do
             docker rm -f "$c" 2>/dev/null
         done
@@ -3491,7 +3500,6 @@ Docker и сеть останутся.\n\
         docker volume ls --format '{{.Name}}' 2>/dev/null | grep -iE "hassio|homeassistant|home.assistant" | while IFS= read -r v; do
             docker volume rm -f "$v" 2>/dev/null
         done
-        # Осиротевшие volumes (проверка по содержимому)
         docker volume ls -f dangling=true --format '{{.Name}}' 2>/dev/null | while IFS= read -r v; do
             local mp=""
             mp=$(docker volume inspect "$v" --format '{{.Mountpoint}}' 2>/dev/null)
@@ -3537,7 +3545,6 @@ Docker и сеть останутся.\n\
         /etc/ssh/sshd_config.d/99-ha-hardening.conf \
         /etc/sysctl.d/99-ha-swap.conf \
         /etc/systemd/journald.conf.d/ha-tuning.conf \
-        /etc/systemd/resolved.conf.d/no-mdns.conf \
         /etc/NetworkManager/conf.d/10-ha-managed.conf \
         /etc/NetworkManager/conf.d/10-dns-resolved.conf 2>/dev/null
 
@@ -3587,9 +3594,7 @@ Docker и сеть останутся.\n\
 
         # --- Данные HA (/usr/share/hassio) ---
         if [ -d "$HASSIO_DIR" ] || [ -L "$HASSIO_DIR" ]; then
-            echo -en " ${WARN} Удалить данные HA (${HASSIO_DIR})? (yes/no): " >&2
-            read -r ans
-            if [ "$ans" = "yes" ]; then
+            if _confirm "Удалить данные HA (${HASSIO_DIR})?"; then
                 local target=""
                 if [ -L "$HASSIO_DIR" ]; then
                     target=$(readlink -f "$HASSIO_DIR")
@@ -3614,26 +3619,23 @@ Docker и сеть останутся.\n\
             if [ -d "$ep" ]; then
                 local ep_size=""
                 ep_size=$(du -sh "$ep" 2>/dev/null | awk '{print $1}')
-                echo -en " ${WARN} Найден ${ep} (${ep_size:-?}). Удалить? (yes/no): " >&2
-                read -r ans
-                case "$ans" in yes|y|Y|д|Д|да) rm -rf "$ep"; msg_ok "Удалён: ${ep}" ;; esac
+                _confirm "Найден ${ep} (${ep_size:-?}). Удалить?" && { rm -rf "$ep"; msg_ok "Удалён: ${ep}"; }
             fi
         done
 
         # --- Данные на внешнем диске ---
         if [ -n "${OPT_DATA_DIR:-}" ] && [ -d "${OPT_DATA_DIR:-}/hassio" ]; then
-            echo -en " ${WARN} Данные на внешнем диске (${OPT_DATA_DIR}/hassio). Удалить? (yes/no): " >&2
-            read -r ans
-            case "$ans" in yes|y|Y|д|Д|да) rm -rf "${OPT_DATA_DIR}/hassio"; msg_ok "Удалены: ${OPT_DATA_DIR}/hassio" ;; esac
+            _confirm "Данные на внешнем диске (${OPT_DATA_DIR}/hassio). Удалить?" && {
+                rm -rf "${OPT_DATA_DIR}/hassio"
+                msg_ok "Удалены: ${OPT_DATA_DIR}/hassio"
+            }
         fi
 
         # --- Docker на внешнем диске ---
         local docker_target=""
         if [ -L /var/lib/docker ]; then
             docker_target=$(readlink -f /var/lib/docker)
-            echo -en " ${WARN} Docker на внешнем диске (${docker_target}). Удалить? (yes/no): " >&2
-            read -r ans
-            if [ "$ans" = "yes" ]; then
+            if _confirm "Docker на внешнем диске (${docker_target}). Удалить?"; then
                 systemctl stop docker 2>/dev/null || true
                 rm -f /var/lib/docker
                 rm -rf "$docker_target"
@@ -3645,9 +3647,7 @@ Docker и сеть останутся.\n\
 
         # --- Swap файл ---
         if [ -f /swapfile ]; then
-            echo -en " ${WARN} Удалить swap-файл? (yes/no): " >&2
-            read -r ans
-            if [ "$ans" = "yes" ]; then
+            if _confirm "Удалить swap-файл?"; then
                 swapoff /swapfile 2>/dev/null
                 rm -f /swapfile
                 sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null
@@ -3658,35 +3658,32 @@ Docker и сеть останутся.\n\
         # --- Hostname ---
         if [ "$(hostname 2>/dev/null)" = "homeassistant" ]; then
             echo -en " ${WARN} Вернуть имя хоста? (введите новое или Enter для пропуска): " >&2
-            read -r ans
-            if [ -n "$ans" ]; then
-                hostnamectl set-hostname "$ans" 2>/dev/null
-                msg_ok "Имя хоста: ${ans}"
+            local hn; read -r hn
+            if [ -n "$hn" ]; then
+                hostnamectl set-hostname "$hn" 2>/dev/null
+                msg_ok "Имя хоста: ${hn}"
             fi
         fi
 
         # --- fstab ---
         if [ -f "${BACKUP_DIR}/fstab.bak" ]; then
-            echo -en " ${WARN} Восстановить оригинальный fstab? (yes/no): " >&2
-            read -r ans
-            if [ "$ans" = "yes" ]; then
+            _confirm "Восстановить оригинальный fstab?" && {
                 cp "${BACKUP_DIR}/fstab.bak" /etc/fstab 2>/dev/null
                 msg_ok "fstab восстановлен"
-            fi
+            }
         fi
 
         # --- Бэкапы ---
         if [ -d "$HA_BACKUP_DIR" ]; then
-            echo -en " ${WARN} Удалить бэкапы (${HA_BACKUP_DIR})? (yes/no): " >&2
-            read -r ans
-            case "$ans" in yes|y|Y|д|Д|да) rm -rf "$HA_BACKUP_DIR"; msg_ok "Бэкапы удалены" ;; esac
+            _confirm "Удалить бэкапы (${HA_BACKUP_DIR})?" && {
+                rm -rf "$HA_BACKUP_DIR"
+                msg_ok "Бэкапы удалены"
+            }
         fi
 
         # --- Пользователь homeassistant ---
         if id homeassistant &>/dev/null; then
-            echo -en " ${WARN} Удалить пользователя homeassistant? (yes/no): " >&2
-            read -r ans
-            if [ "$ans" = "yes" ]; then
+            if _confirm "Удалить пользователя homeassistant?"; then
                 local ha_home=""
                 ha_home=$(getent passwd homeassistant 2>/dev/null | cut -d: -f6)
                 userdel -r homeassistant 2>/dev/null || userdel homeassistant 2>/dev/null || true
@@ -3696,9 +3693,10 @@ Docker и сеть останутся.\n\
         fi
 
         # --- Логи ---
-        echo -en " ${WARN} Удалить логи установщика? (yes/no): " >&2
-        read -r ans
-        case "$ans" in yes|y|Y|д|Д|да) rm -f /var/log/ha_install_*.log /var/log/ha_install_reboot.log 2>/dev/null; msg_ok "Логи удалены" ;; esac
+        _confirm "Удалить логи установщика?" && {
+            rm -f /var/log/ha_install_*.log /var/log/ha_install_reboot.log 2>/dev/null
+            msg_ok "Логи удалены"
+        }
 
         # --- Данные установщика (ПОСЛЕ всех восстановлений из backup) ---
         rm -rf "$HA_INSTALLER_DIR" /root/.ha_install_state /root/.ha_install_backup 2>/dev/null
@@ -3849,10 +3847,8 @@ Docker и сеть останутся.\n\
                     cp "$bak" "$f" 2>/dev/null
                     msg_ok "$(basename "$f") восстановлен из бэкапа"
                 else
-                    # Удалить параметры вручную
                     sed -i 's/ apparmor=1 security=apparmor//g' "$f" 2>/dev/null
                     sed -i 's/ apparmor=1//g; s/ security=apparmor//g' "$f" 2>/dev/null
-                    # Очистить пустую extraargs
                     sed -i '/^extraargs=$/d' "$f" 2>/dev/null
                     msg_ok "$(basename "$f") очищен"
                 fi
@@ -3862,12 +3858,10 @@ Docker и сеть останутся.\n\
         # --- Сеть: вернуть ifupdown ---
         msg_action "Восстановление сети..."
 
-        # Восстановить /etc/network/interfaces
         if [ -f "${BACKUP_DIR}/interfaces.bak" ]; then
             cp "${BACKUP_DIR}/interfaces.bak" /etc/network/interfaces 2>/dev/null
             msg_ok "interfaces восстановлен из бэкапа"
         else
-            # Минимальный рабочий конфиг
             local iface=""
             iface=$(ip -o link show 2>/dev/null | awk -F': ' '!/lo/{print $2; exit}')
             cat > /etc/network/interfaces << IFEOF
@@ -3881,7 +3875,6 @@ IFEOF
             msg_ok "interfaces создан (DHCP на ${iface:-eth0})"
         fi
 
-        # Восстановить resolv.conf
         if [ -f "${BACKUP_DIR}/resolv.conf.bak" ]; then
             rm -f /etc/resolv.conf 2>/dev/null
             cp "${BACKUP_DIR}/resolv.conf.bak" /etc/resolv.conf 2>/dev/null
@@ -3892,7 +3885,6 @@ IFEOF
             msg_ok "resolv.conf создан (8.8.8.8, 1.1.1.1)"
         fi
 
-        # Переключение на ifupdown
         systemctl stop NetworkManager 2>/dev/null || true
         systemctl disable NetworkManager 2>/dev/null || true
         systemctl stop systemd-resolved 2>/dev/null || true
@@ -3901,7 +3893,6 @@ IFEOF
         systemctl restart networking 2>/dev/null || true
         msg_ok "Сеть: ifupdown"
 
-        # Проверить что сеть работает
         local net_wait=0
         while [ $net_wait -lt 15 ]; do
             local check_ip=""
@@ -3928,10 +3919,6 @@ IFEOF
         fi
         rm -f /etc/ssh/sshd_config.d/99-ha-hardening.conf 2>/dev/null
         systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
-
-        # --- ha-install из PATH ---
-        rm -f "$SAFE_SCRIPT_PATH" 2>/dev/null
-        msg_ok "ha-install удалён из PATH"
 
         # --- Логи ---
         rm -f /var/log/ha_install_*.log /var/log/ha_install_reboot.log 2>/dev/null
