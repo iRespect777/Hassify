@@ -3528,7 +3528,7 @@ Docker и сеть останутся.\n\
         /usr/local/bin/ha-net-recovery /usr/local/bin/ha-backup /usr/local/bin/ha-restore \
         /usr/local/bin/ha-health /usr/local/bin/ha-thermal /usr/local/bin/ha-metrics \
         /usr/local/bin/ha-boot-check /usr/local/bin/ha-backup-remote /usr/local/bin/ha-weekly-report \
-        /usr/local/bin/ha-update-check "$HA_INFO_FILE" 2>/dev/null
+        /usr/local/bin/ha-update-check "$SAFE_SCRIPT_PATH" "$HA_INFO_FILE" 2>/dev/null
 
     # --- Удаление конфигов установщика ---
     msg_action "Удаление конфигов..."
@@ -3727,7 +3727,6 @@ Docker и сеть останутся.\n\
         msg_dim "- AppArmor в загрузчике (apparmor=1 security=apparmor)"
         msg_dim "- Пакеты (apparmor, network-manager, avahi-daemon и др.)"
         msg_dim "- NetworkManager как менеджер сети (вместо ifupdown)"
-        msg_dim "- /usr/local/bin/ha-install (скрипт установщика)"
         echo ""
 
     # =======================================================
