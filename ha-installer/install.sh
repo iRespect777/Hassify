@@ -256,6 +256,22 @@ text_password() {
   echo "$val"
 }
 
+# =========================================================================
+# SAFE READ (с таймаутом для защиты SSH)
+# =========================================================================
+safe_read() {
+    local prompt="$1" default="${2:-}" timeout="${3:-300}"
+    echo -en "$prompt" >&2
+    local val=""
+    if [ -t 0 ]; then
+        read -r -t "$timeout" val 2>/dev/null || val="$default"
+    else
+        val="$default"
+    fi
+    [ -z "$val" ] && val="$default"
+    echo "$val"
+}
+
 # ============================================================================
 # DIRS, APT, TMPFS
 # ============================================================================
@@ -1962,6 +1978,113 @@ run_wizard() {
   fi
 }
 
+# =========================================================================
+# ПРОВЕРКА СУЩЕСТВУЮЩЕЙ УСТАНОВКИ
+# =========================================================================
+check_existing_installation() {
+    # Проверяем работает ли HA
+    if ! systemctl is-active --quiet hassio-supervisor 2>/dev/null; then
+        return 1  # не установлен — продолжить к wizard
+    fi
+
+    local ip
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+
+    if command -v whiptail &>/dev/null; then
+        local action
+        action=$(whiptail --title "HA уже установлен" --menu \
+            "Home Assistant уже работает!\n\nДоступен: http://${ip:-localhost}:8123\n\nЧто сделать?" 18 60 6 \
+            "menu"      "Меню обслуживания" \
+            "check"     "Диагностика" \
+            "update"    "Обновить OS-Agent и HA" \
+            "status"    "Мониторинг (live)" \
+            "reinstall" "Переустановить (сброс + новая установка)" \
+            "exit"      "Выйти" \
+            3>&1 1>&2 2>&3) || return 0  # ESC → показать меню
+
+        case "$action" in
+            menu)
+                return 0 ;;  # покажет show_main_menu
+            check)
+                CHECK_ONLY=true; return 2 ;;
+            update)
+                DO_UPDATE=true; return 2 ;;
+            status)
+                SHOW_STATUS=true; return 2 ;;
+            reinstall)
+                # Двойное подтверждение
+                if whiptail --title "Переустановка" --yesno \
+                    "ВНИМАНИЕ!\n\nПереустановка сбросит состояние установщика.\nДанные HA останутся до шага установки.\n\nСоздать бэкап перед переустановкой?" 14 55; then
+                    if [ -x /usr/local/bin/ha-backup ]; then
+                        msg_action "Создание бэкапа..."
+                        /usr/local/bin/ha-backup 2>/dev/null && msg_ok "Бэкап создан" || msg_warn "Бэкап не удался"
+                    else
+                        msg_warn "ha-backup не установлен, пропуск"
+                    fi
+                fi
+                if whiptail --title "Подтверждение" --yesno "Начать переустановку?" 8 40; then
+                    reset_state
+                    return 1  # продолжить к wizard
+                fi
+                return 0 ;;  # отменил → меню
+            exit)
+                exit 0 ;;
+        esac
+    else
+        # Текстовый режим
+        echo ""
+        msg_warn "Home Assistant уже установлен и работает!"
+        msg_info "Доступен: http://${ip:-localhost}:8123"
+        echo ""
+        msg_info "Действия:"
+        msg_dim "  sudo ha-install --check       Диагностика"
+        msg_dim "  sudo ha-install --update      Обновление"
+        msg_dim "  sudo ha-install --status      Мониторинг"
+        msg_dim "  sudo ha-install --uninstall   Удаление"
+        echo ""
+
+        local action
+        action=$(text_menu "Действие" "Выберите:" \
+            "menu"      "Меню обслуживания" \
+            "reinstall" "Переустановить" \
+            "exit"      "Выйти") || return 0
+
+        case "$action" in
+            menu)
+                return 0 ;;
+            reinstall)
+                echo ""
+                if _confirm_reinstall; then
+                    reset_state
+                    return 1
+                fi
+                return 0 ;;
+            exit)
+                exit 0 ;;
+        esac
+    fi
+
+    return 0
+}
+
+# Подтверждение переустановки (текстовый режим)
+_confirm_reinstall() {
+    msg_warn "Переустановка сбросит состояние установщика."
+    if [ -x /usr/local/bin/ha-backup ]; then
+        echo -en " ${WARN} Создать бэкап перед переустановкой? (y/д): " >&2
+        local a; read -r a
+        case "$a" in
+            y|Y|д|Д|yes|да) 
+                msg_action "Создание бэкапа..."
+                /usr/local/bin/ha-backup 2>/dev/null && msg_ok "Бэкап создан" || msg_warn "Бэкап не удался"
+                ;;
+        esac
+    fi
+    echo -en " ${WARN} Начать переустановку? Введите 'ПЕРЕУСТАНОВИТЬ': " >&2
+    local ans; read -r ans
+    [ "$ans" = "ПЕРЕУСТАНОВИТЬ" ]
+}
+
 # ============================================================================
 # MAIN MENU
 # ============================================================================
@@ -1971,7 +2094,7 @@ show_main_menu() {
 
   local choice
   if command -v whiptail &>/dev/null; then
-    choice=$(whiptail --title "HA Установщик v${SCRIPT_VERSION}" --menu "Действие:" 22 60 14 \
+    choice=$(whiptail --title "HA Установщик v${SCRIPT_VERSION}" --menu "Действие:" 24 60 15 \
       "install"   "Установить HA Supervised" \
       "check"     "Диагностика" \
       "status"    "Мониторинг (live)" \
@@ -1979,6 +2102,7 @@ show_main_menu() {
       "backup"    "Создать бэкап" \
       "restore"   "Восстановить бэкап" \
       "health"    "Отчёт о здоровье" \
+      "rescue"    "Восстановление (авто-починка)" \
       "benchmark" "Тест железа" \
       "export"    "Экспорт конфига" \
       "history"   "История запусков" \
@@ -1995,6 +2119,7 @@ show_main_menu() {
       "backup"    "Создать бэкап" \
       "restore"   "Восстановить бэкап" \
       "health"    "Отчёт о здоровье" \
+      "rescue"    "Восстановление" \
       "benchmark" "Тест железа" \
       "export"    "Экспорт конфига" \
       "history"   "История" \
@@ -2019,6 +2144,7 @@ show_main_menu() {
     health)
       if [ -x /usr/local/bin/ha-health ]; then /usr/local/bin/ha-health; exit $?
       else msg_error "ha-health не установлен"; exit 1; fi;;
+    rescue)     DO_RESCUE=true; RUN_WIZARD=false;;
     benchmark) DO_BENCHMARK=true; RUN_WIZARD=false;;
     export)    DO_EXPORT_CONFIG=true; RUN_WIZARD=false;;
     history)   DO_SHOW_HISTORY=true; RUN_WIZARD=false;;
@@ -3427,6 +3553,299 @@ do_check() {
   echo ""
 }
 
+# =========================================================================
+# ОПЕРАЦИИ: РЕЖИМ ВОССТАНОВЛЕНИЯ
+# =========================================================================
+do_rescue() {
+    header "РЕЖИМ ВОССТАНОВЛЕНИЯ"
+
+    local fixes=0 errors=0
+
+    # --- 1. Файловая система ---
+    msg_action "[1/8] Файловая система..."
+    if ! touch /tmp/.ha_rescue_test 2>/dev/null; then
+        msg_error "Файловая система readonly!"
+        msg_dim "Попытка: mount -o remount,rw /"
+        mount -o remount,rw / 2>/dev/null || true
+        if touch /tmp/.ha_rescue_test 2>/dev/null; then
+            msg_ok "ФС перемонтирована в rw"
+            fixes=$((fixes+1))
+        else
+            msg_error "Не удалось перемонтировать ФС"
+            errors=$((errors+1))
+        fi
+    else
+        msg_ok "ФС: OK (rw)"
+    fi
+    rm -f /tmp/.ha_rescue_test 2>/dev/null
+
+    if dmesg 2>/dev/null | tail -200 | grep -qi "ext4.*error\|I/O error"; then
+        msg_warn "Ошибки ФС в dmesg!"
+        msg_dim "Рекомендуется: fsck после загрузки с USB"
+        errors=$((errors+1))
+    fi
+
+    # --- 2. Место на диске ---
+    msg_action "[2/8] Место на диске..."
+    local avail
+    avail=$(df -m / | awk 'NR==2{print $4}')
+    if [ "${avail:-0}" -lt 500 ]; then
+        msg_error "Критически мало места: ${avail}МБ"
+        msg_action "Экстренная очистка..."
+
+        # Логи
+        journalctl --vacuum-size=20M 2>/dev/null || true
+        # Apt кэш
+        apt-get clean 2>/dev/null || true
+        # Docker
+        command -v docker &>/dev/null && docker system prune -f 2>/dev/null || true
+        # Tmp
+        find /tmp -type f -mtime +1 -delete 2>/dev/null || true
+        # Старые логи установщика
+        local log_count
+        log_count=$(ls /var/log/ha_install_*.log 2>/dev/null | wc -l)
+        if [ "${log_count:-0}" -gt 3 ]; then
+            ls -1t /var/log/ha_install_*.log 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null
+        fi
+
+        local after
+        after=$(df -m / | awk 'NR==2{print $4}')
+        msg_ok "Освобождено: ${avail}МБ → ${after}МБ"
+        fixes=$((fixes+1))
+    else
+        msg_ok "Диск: ${avail}МБ свободно"
+    fi
+
+    # --- 3. Сеть ---
+    msg_action "[3/8] Сеть..."
+    local ip
+    iface=$(ip -o link show 2>/dev/null | awk -F': ' '!/lo/{print $2; exit}' | cut -d'@' -f1)
+    if [ -z "$ip" ]; then
+        msg_error "Нет IP-адреса!"
+        msg_action "Восстановление сети..."
+
+        # Попытка 1: NetworkManager
+        if command -v nmcli &>/dev/null; then
+            systemctl restart NetworkManager 2>/dev/null || true
+            sleep 5
+            ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        fi
+
+        # Попытка 2: ifupdown
+        if [ -z "$ip" ]; then
+            local iface
+            iface=$(ip -o link show 2>/dev/null | awk -F': ' '!/lo/{print $2; exit}')
+            if [ -n "$iface" ]; then
+                ip link set "$iface" up 2>/dev/null || true
+                if command -v dhclient &>/dev/null; then
+                    dhclient "$iface" 2>/dev/null || true
+                elif command -v udhcpc &>/dev/null; then
+                    udhcpc -i "$iface" -q 2>/dev/null || true
+                fi
+                sleep 5
+                ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+            fi
+        fi
+
+        # Попытка 3: systemd-networkd
+        if [ -z "$ip" ]; then
+            systemctl restart systemd-networkd 2>/dev/null || true
+            sleep 5
+            ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        fi
+
+        if [ -n "$ip" ]; then
+            msg_ok "Сеть восстановлена: ${ip}"
+            fixes=$((fixes+1))
+        else
+            msg_error "Не удалось восстановить сеть"
+            msg_dim "Вручную:"
+            msg_dim "  ip link set eth0 up"
+            msg_dim "  dhclient eth0"
+            errors=$((errors+1))
+        fi
+    else
+        msg_ok "Сеть: ${ip}"
+    fi
+
+    # --- 4. DNS ---
+    msg_action "[4/8] DNS..."
+    if ! ping -c1 -W3 github.com &>/dev/null; then
+        if ping -c1 -W2 8.8.8.8 &>/dev/null; then
+            msg_warn "DNS не работает, исправление..."
+            # Сохранить текущий если не пустой
+            if [ -s /etc/resolv.conf ] && grep -q "nameserver" /etc/resolv.conf 2>/dev/null; then
+                cp /etc/resolv.conf /etc/resolv.conf.rescue.bak 2>/dev/null
+            fi
+            rm -f /etc/resolv.conf 2>/dev/null
+            echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" > /etc/resolv.conf
+            sleep 2
+            if ping -c1 -W3 github.com &>/dev/null; then
+                msg_ok "DNS исправлен"
+                fixes=$((fixes+1))
+            else
+                msg_error "DNS всё ещё не работает"
+                errors=$((errors+1))
+            fi
+        elif [ -z "$ip" ]; then
+            msg_error "Нет сети — DNS не проверить"
+        else
+            msg_error "Нет доступа к интернету"
+            errors=$((errors+1))
+        fi
+    else
+        msg_ok "DNS: OK"
+    fi
+
+    # --- 5. Docker ---
+    msg_action "[5/8] Docker..."
+    if command -v docker &>/dev/null; then
+        if ! docker info &>/dev/null; then
+            msg_warn "Docker не отвечает"
+            msg_action "Перезапуск Docker..."
+            systemctl restart docker 2>/dev/null || true
+
+            local dw=0
+            while ! docker info &>/dev/null && [ $dw -lt 30 ]; do
+                sleep 3; dw=$((dw+3))
+            done
+
+            if docker info &>/dev/null; then
+                msg_ok "Docker восстановлен"
+                fixes=$((fixes+1))
+            else
+                msg_error "Docker не запускается"
+                msg_dim "Логи: journalctl -u docker -n 20"
+                errors=$((errors+1))
+            fi
+        else
+            local drv
+            drv=$(docker info --format '{{.Driver}}' 2>/dev/null || echo "?")
+            msg_ok "Docker: OK (${drv})"
+        fi
+    else
+        msg_error "Docker не установлен"
+        errors=$((errors+1))
+    fi
+
+    # --- 6. HA Supervisor ---
+    msg_action "[6/8] Supervisor..."
+    if systemctl list-unit-files hassio-supervisor.service &>/dev/null; then
+        if ! systemctl is-active --quiet hassio-supervisor 2>/dev/null; then
+            msg_warn "Supervisor не работает"
+            msg_action "Перезапуск Supervisor..."
+
+            # Проверить os-release перед запуском
+            if [ -f "$FAKED_OS_RELEASE" ]; then
+                cp "$FAKED_OS_RELEASE" /etc/os-release 2>/dev/null
+                msg_dim "os-release подменён для supervisor"
+            fi
+
+            systemctl restart hassio-supervisor 2>/dev/null || true
+            sleep 15
+
+            if systemctl is-active --quiet hassio-supervisor 2>/dev/null; then
+                msg_ok "Supervisor восстановлен"
+                fixes=$((fixes+1))
+            else
+                msg_error "Supervisor не запускается"
+                msg_dim "Логи: journalctl -u hassio-supervisor -n 30"
+                errors=$((errors+1))
+            fi
+        else
+            msg_ok "Supervisor: active"
+        fi
+    else
+        msg_warn "Supervisor не установлен"
+    fi
+
+    # --- 7. HA Core контейнер ---
+    msg_action "[7/8] HA Core..."
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^homeassistant$'; then
+            msg_warn "HA Core не запущен"
+
+            # Проверить существует ли контейнер
+            if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^homeassistant$'; then
+                msg_action "Запуск контейнера..."
+                docker start homeassistant 2>/dev/null || true
+                sleep 10
+
+                if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^homeassistant$'; then
+                    msg_ok "HA Core запущен"
+                    fixes=$((fixes+1))
+                else
+                    msg_error "HA Core не запускается"
+                    msg_dim "Логи: docker logs homeassistant --tail 30"
+                    errors=$((errors+1))
+                fi
+            else
+                msg_warn "Контейнер homeassistant не существует"
+                msg_dim "Supervisor должен создать его автоматически"
+                # Перезапустить supervisor чтобы пересоздал
+                systemctl restart hassio-supervisor 2>/dev/null || true
+                msg_dim "Supervisor перезапущен, ожидайте 5-10 минут"
+            fi
+        else
+            local ha_status
+            ha_status=$(docker inspect -f '{{.State.Status}}' homeassistant 2>/dev/null || echo "?")
+            msg_ok "HA Core: ${ha_status}"
+
+            # Проверить HTTP
+            local hc
+            hc=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:8123 2>/dev/null || echo 000)
+            if [ "$hc" = "200" ] || [ "$hc" = "401" ]; then
+                msg_ok "HA Web: OK (${hc})"
+            elif [ "$hc" = "000" ]; then
+                msg_dim "HA Web: загружается (это нормально первые 10-15 минут)"
+            else
+                msg_warn "HA Web: ${hc}"
+            fi
+        fi
+    fi
+
+    # --- 8. AppArmor ---
+    msg_action "[8/8] AppArmor..."
+    local aa
+    aa=$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null) || aa="N"
+    if [ "$aa" = "Y" ]; then
+        msg_ok "AppArmor: активен"
+        if ! systemctl is-active --quiet apparmor 2>/dev/null; then
+            systemctl start apparmor 2>/dev/null || true
+            msg_dim "Сервис apparmor запущен"
+            fixes=$((fixes+1))
+        fi
+    else
+        msg_warn "AppArmor: не активен в ядре"
+        msg_dim "Для активации: добавьте 'apparmor=1 security=apparmor' в загрузчик и перезагрузите"
+    fi
+
+    # === ИТОГ ===
+    separator
+    echo ""
+    if [ $errors -eq 0 ] && [ $fixes -eq 0 ]; then
+        msg_ok "Все проверки пройдены, проблем не обнаружено"
+    elif [ $errors -eq 0 ]; then
+        msg_ok "Исправлено проблем: ${fixes}"
+    else
+        msg_warn "Исправлено: ${fixes}, не удалось: ${errors}"
+    fi
+
+    echo ""
+    msg_info "Дополнительная диагностика:"
+    msg_dim "  sudo ha-install --check                 Полная проверка"
+    msg_dim "  sudo ha-install --status                Мониторинг (live)"
+    msg_dim "  journalctl -u hassio-supervisor -n 50   Логи Supervisor"
+    msg_dim "  docker logs homeassistant --tail 50     Логи HA"
+    msg_dim "  dmesg | tail -50                        Системные ошибки"
+    echo ""
+
+    # Отправить уведомление о результате
+    if [ $fixes -gt 0 ] || [ $errors -gt 0 ]; then
+        send_notification "Rescue: исправлено ${fixes}, ошибок ${errors}"
+    fi
+}
+
 # ============================================================================
 # ОПЕРАЦИИ: МОНИТОРИНГ (live)
 # ============================================================================
@@ -3461,9 +3880,14 @@ do_uninstall() {
 
     # --- Локальная функция подтверждения ---
     _confirm() {
-        local prompt="$1"
+        local prompt="$1" timeout="${2:-120}"
         echo -en " ${WARN} ${prompt} (yes/y/д): " >&2
-        local a; read -r a
+        local a=""
+        if [ -t 0 ]; then
+            read -r -t "$timeout" a 2>/dev/null || a="no"
+        else
+            a="no"
+        fi
         case "$a" in
             yes|y|Y|д|Д|да|Да) return 0 ;;
             *) return 1 ;;
@@ -4179,6 +4603,7 @@ HA Установщик v${SCRIPT_VERSION}
     --self-update                       Обновление скрипта
     --self-test                         Самотестирование
     --benchmark                         Тест производительности
+    --rescue                            Режим восстановления (авто-починка)
     --export-config                     Экспорт конфигурации
     --history                           История запусков
 
@@ -4235,6 +4660,7 @@ parse_args() {
       --self-update)        DO_SELF_UPDATE=true; explicit_mode=true;;
       --self-test)          DO_SELF_TEST=true; explicit_mode=true;;
       --benchmark)          DO_BENCHMARK=true; explicit_mode=true;;
+      --rescue)             DO_RESCUE=true; explicit_mode=true;;
       --export-config)      DO_EXPORT_CONFIG=true; explicit_mode=true;;
       --history)            DO_SHOW_HISTORY=true; explicit_mode=true;;
       --reset-state)        reset_state; exit 0;;
@@ -4396,6 +4822,7 @@ main() {
   [ "$DO_SELF_UPDATE" = true ]  && { show_banner; do_self_update; exit 0; }
   [ "$DO_SELF_TEST" = true ]    && { show_banner; do_self_test; exit $?; }
   [ "$DO_BENCHMARK" = true ]    && { show_banner; do_benchmark; exit 0; }
+  [ "$DO_RESCUE" = true ]       && { show_banner; do_rescue; exit 0; }
   [ "$DO_EXPORT_CONFIG" = true ] && { show_banner; export_config; exit 0; }
   [ "$DO_SHOW_HISTORY" = true ] && { show_banner; show_history; exit 0; }
 
@@ -4404,10 +4831,23 @@ main() {
 
   # Интерактивный режим: цикл меню → wizard → меню
   if [ $# -eq 0 ] && [ "$RUN_WIZARD" = true ]; then
-    while true; do
-      if [ -t 0 ] && [ -t 1 ]; then
-        show_main_menu || exit 0  # ESC в меню = выход
-      fi
+        local install_checked=false
+        while true; do
+            if [ -t 0 ] && [ -t 1 ]; then
+                if [ "$install_checked" = false ]; then
+                    install_checked=true
+                    check_existing_installation
+                    local ci_rc=$?
+                    if [ $ci_rc -eq 2 ]; then
+                        [ "$CHECK_ONLY" = true ]   && { show_banner; do_check; exit 0; }
+                        [ "$SHOW_STATUS" = true ]  && { do_status; exit 0; }
+                        [ "$DO_UPDATE" = true ]    && { show_banner; acquire_lock; do_update; exit 0; }
+                    elif [ $ci_rc -eq 1 ]; then
+                        break
+                    fi
+                fi
+                show_main_menu || exit 0
+            fi
 
       # Обработка выбора из меню
       [ "$CHECK_ONLY" = true ]      && { show_banner; do_check; exit 0; }
@@ -4417,6 +4857,7 @@ main() {
       [ "$DO_SELF_UPDATE" = true ]  && { show_banner; do_self_update; exit 0; }
       [ "$DO_SELF_TEST" = true ]    && { show_banner; do_self_test; exit $?; }
       [ "$DO_BENCHMARK" = true ]    && { show_banner; do_benchmark; exit 0; }
+      [ "$DO_RESCUE" = true ]       && { show_banner; do_rescue; exit 0; }
       [ "$DO_EXPORT_CONFIG" = true ] && { show_banner; export_config; exit 0; }
       [ "$DO_SHOW_HISTORY" = true ] && { show_banner; show_history; exit 0; }
 
@@ -4430,7 +4871,7 @@ main() {
           RUN_WIZARD=true
           CHECK_ONLY=false; SHOW_STATUS=false; UNINSTALL=false
           DO_UPDATE=false; DO_SELF_UPDATE=false; DO_SELF_TEST=false
-          DO_BENCHMARK=false; DO_EXPORT_CONFIG=false; DO_SHOW_HISTORY=false
+          DO_BENCHMARK=false; DO_RESCUE=false; DO_EXPORT_CONFIG=false; DO_SHOW_HISTORY=false
           continue  # показать меню снова
         fi
       fi
