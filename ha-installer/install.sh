@@ -4873,6 +4873,7 @@ main() {
           CHECK_ONLY=false; SHOW_STATUS=false; UNINSTALL=false
           DO_UPDATE=false; DO_SELF_UPDATE=false; DO_SELF_TEST=false
           DO_BENCHMARK=false; DO_EXPORT_CONFIG=false; DO_SHOW_HISTORY=false
+          DO_RESCUE=false
           continue  # показать меню снова
         fi
       fi
