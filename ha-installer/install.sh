@@ -4311,9 +4311,6 @@ Docker и сеть останутся.\n\
                     [ -n "$check_ip" ] && msg_ok "Сеть: ${check_ip} (DHCP)" || msg_warn "Нет IP"
                 fi
             fi
-
-            msg_ok "Сеть: NetworkManager"
-
         else
             # --- Вариант 2: Вернуть ifupdown (был до установки) ---
             msg_dim "Восстановление ifupdown из бэкапа"
@@ -4375,8 +4372,6 @@ Docker и сеть останутся.\n\
                     [ -n "$check_ip" ] && msg_ok "Сеть: ${check_ip} (DHCP)" || msg_warn "Нет IP"
                 fi
             fi
-
-            msg_ok "Сеть: ifupdown"
         fi
 
         # Финальная проверка
