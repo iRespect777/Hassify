@@ -4380,9 +4380,14 @@ Docker и сеть останутся.\n\
         if [ -z "$final_ip" ]; then
             msg_error "Сеть не работает!"
             msg_warn "После перезагрузки попробуйте:"
-            msg_dim "  sudo systemctl restart NetworkManager"
+            if [ "$use_nm" = true ]; then
+                msg_dim "  sudo systemctl restart NetworkManager"
+                msg_dim "  sudo nmcli dev wifi list  (для WiFi)"
+            else
+                msg_dim "  sudo systemctl restart networking"
+                msg_dim "  sudo ifup ${iface:-eth0}"
+            fi
             msg_dim "  sudo dhclient ${iface:-eth0}"
-            msg_dim "  sudo nmcli dev wifi list  (для WiFi)"
         fi
 
         # --- UFW: полный сброс ---
