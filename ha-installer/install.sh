@@ -1738,14 +1738,6 @@ run_wizard() {
   # ADVANCED: all options
   # =============================================
 
-  # Benchmark
-  if [ "$HAS_WHIPTAIL" = true ]; then
-    if whiptail --title "Тест железа" --yesno "Запустить тест? (~30с)" 8 50 --defaultno 2>/dev/null; then
-      do_benchmark
-      [ -t 0 ] && { echo -en "\n   Нажмите Enter..." >&2; read -r; }
-    fi
-  fi
-
   # Swap
   local eff_ram="${BENCH_RAM_MB:-$ram_mb}"
   local swap_rec="zram"
@@ -4756,10 +4748,17 @@ main() {
       [ "$DO_EXPORT_CONFIG" = true ] && { show_banner; export_config; exit 0; }
       [ "$DO_SHOW_HISTORY" = true ] && { show_banner; show_history; exit 0; }
 
-      # install выбран → wizard
-      if [ "$RUN_WIZARD" = true ] && [ "$DRY_RUN" = false ]; then
-        if run_wizard; then
-          break  # wizard вернул 0 = начать установку
+      # install выбран → тест железа → wizard
+            if [ "$RUN_WIZARD" = true ] && [ "$DRY_RUN" = false ]; then
+                # Тест железа перед wizard (результат влияет на рекомендацию профиля)
+                show_banner
+                do_benchmark
+                if [ -t 0 ]; then
+                    echo -en "\n Нажмите Enter для продолжения..." >&2
+                    read -r -t 30
+                fi
+                if run_wizard; then
+                    break
         else
           # wizard вернул 1 = обратно в меню
           # Сбросить флаги
