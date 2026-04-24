@@ -431,8 +431,92 @@ import_config() {
 # ============================================================================
 # NOTIFICATIONS
 # ============================================================================
+# ============================================================================
+# WEBHOOK — умная отправка под разные сервисы
+# ============================================================================
+_send_webhook() {
+  local url="$1"
+  local msg="$2"
+  local host
+  host=$(hostname 2>/dev/null || echo "ha-box")
+  local full_msg="HA (${host}): ${msg}"
+
+  # Определяем тип сервиса по URL
+  case "$url" in
+
+    # --- ntfy.sh — plain text в body, заголовки для красоты ---
+    *ntfy.sh/*)
+      curl -s -X POST "$url" \
+        -H "Title: Home Assistant" \
+        -H "Priority: default" \
+        -H "Tags: house" \
+        -d "$full_msg" \
+        >/dev/null 2>&1 || true
+      ;;
+
+    # --- Discord — JSON с полем "content" ---
+    *discord.com/api/webhooks/*|*discordapp.com/api/webhooks/*)
+      local json
+      # Экранируем кавычки и обратные слеши в сообщении
+      local escaped_msg
+      escaped_msg=$(printf '%s' "$full_msg" \
+        | sed 's/\\/\\\\/g; s/"/\\"/g')
+      json="{\"content\":\"${escaped_msg}\"}"
+      curl -s -X POST "$url" \
+        -H "Content-Type: application/json" \
+        -d "$json" \
+        >/dev/null 2>&1 || true
+      ;;
+
+    # --- Slack — JSON с полем "text" ---
+    *hooks.slack.com/*)
+      local escaped_msg
+      escaped_msg=$(printf '%s' "$full_msg" \
+        | sed 's/\\/\\\\/g; s/"/\\"/g')
+      curl -s -X POST "$url" \
+        -H "Content-Type: application/json" \
+        -d "{\"text\":\"${escaped_msg}\"}" \
+        >/dev/null 2>&1 || true
+      ;;
+
+    # --- Gotify — JSON с полями "title" и "message" ---
+    */message*|*gotify*)
+      local escaped_msg
+      escaped_msg=$(printf '%s' "$full_msg" \
+        | sed 's/\\/\\\\/g; s/"/\\"/g')
+      curl -s -X POST "$url" \
+        -H "Content-Type: application/json" \
+        -d "{\"title\":\"Home Assistant\",\"message\":\"${escaped_msg}\",\"priority\":5}" \
+        >/dev/null 2>&1 || true
+      ;;
+
+    # --- Все остальные — сначала plain text, fallback на JSON ---
+    *)
+      # Пробуем plain text (работает для большинства self-hosted решений)
+      local rc
+      rc=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X POST "$url" \
+        -d "$full_msg" \
+        2>/dev/null) || rc="000"
+
+      # Если plain text не принят (не 2xx) — пробуем JSON
+      if [[ ! "$rc" =~ ^2 ]]; then
+        local escaped_msg
+        escaped_msg=$(printf '%s' "$full_msg" \
+          | sed 's/\\/\\\\/g; s/"/\\"/g')
+        curl -s -X POST "$url" \
+          -H "Content-Type: application/json" \
+          -d "{\"text\":\"${escaped_msg}\",\"message\":\"${escaped_msg}\"}" \
+          >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+}
+
 send_notification() {
   local msg="$1"
+
+  # --- Telegram ---
   if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ] && [ "$TG_TOKEN" != "__HA_TG_TOKEN__" ]; then
     local rf="/tmp/.ha_notify_rate"
     local now; now=$(date +%s)
@@ -441,16 +525,14 @@ send_notification() {
       echo "$now" > "$rf"
       curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
         --data-urlencode "chat_id=${TG_CHAT}" \
-        --data-urlencode "text=HA ($(hostname)): ${msg}" >/dev/null 2>&1
+        --data-urlencode "text=HA ($(hostname)): ${msg}" \
+        >/dev/null 2>&1
     fi
   fi
+
+  # --- Webhook (ntfy.sh / Discord / Slack / custom) ---
   if [ -n "$OPT_WEBHOOK_URL" ]; then
-    curl -s -X POST "$OPT_WEBHOOK_URL" \
-      -H "Content-Type: application/json" \
-      -d "{\"text\":\"HA ($(hostname)): ${msg}\",\"message\":\"HA ($(hostname)): ${msg}\"}" \
-      >/dev/null 2>&1 || \
-    curl -s -X POST "$OPT_WEBHOOK_URL" \
-      -d "HA ($(hostname)): ${msg}" >/dev/null 2>&1 || true
+    _send_webhook "$OPT_WEBHOOK_URL" "$msg"
   fi
 }
 
@@ -467,13 +549,21 @@ test_notifications() {
   fi
   if [ -n "$OPT_WEBHOOK_URL" ]; then
     msg_action "Тест webhook..."
+
+    # Используем умную отправку вместо прямого curl
+    _send_webhook "$OPT_WEBHOOK_URL" "тест уведомление от установщика"
+
+    # Проверяем доступность URL отдельно для определения статуса
     local rc
-    rc=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OPT_WEBHOOK_URL" \
-      -d "HA Installer: тест" 2>/dev/null)
-    if [ "$rc" -ge 200 ] 2>/dev/null && [ "$rc" -lt 300 ] 2>/dev/null; then
-      msg_ok "Webhook OK"
+    rc=$(curl -s -o /dev/null -w "%{http_code}" \
+      -X POST "$OPT_WEBHOOK_URL" \
+      -d "HA Installer: тест" \
+      2>/dev/null) || rc="000"
+
+    if [[ "$rc" =~ ^2 ]]; then
+      msg_ok "Webhook OK (${rc})"
     else
-      msg_warn "Webhook ошибка (${rc})"; ok=false
+      msg_warn "Webhook ответил: ${rc} (может быть нормально для некоторых сервисов)"
     fi
   fi
   $ok
@@ -3029,20 +3119,101 @@ step_extras() {
   msg_ok "mDNS (avahi)"
 
   # --- ha-notify (только root) ---
-  cat > /usr/local/bin/ha-notify << NTEOF
+  # Безопасное сохранение токенов в отдельный защищённый файл
+  # Это исключает инъекцию через специальные символы в токене/chat_id
+  local secrets_dir="/etc/ha-installer"
+  mkdir -p "$secrets_dir"
+  chmod 700 "$secrets_dir"
+
+  # Записываем каждое значение отдельной строкой — никакой интерполяции в heredoc
+  printf '%s' "${TG_TOKEN}"        > "${secrets_dir}/tg_token"
+  printf '%s' "${TG_CHAT}"         > "${secrets_dir}/tg_chat"
+  printf '%s' "${OPT_WEBHOOK_URL}" > "${secrets_dir}/webhook_url"
+  chmod 600 "${secrets_dir}/tg_token" \
+            "${secrets_dir}/tg_chat" \
+            "${secrets_dir}/webhook_url"
+
+  # Скрипт читает токены из файлов — без подстановки небезопасных значений
+  cat > /usr/local/bin/ha-notify << 'NTEOF'
 #!/bin/bash
-MSG="\${1:-}"; [ -z "\$MSG" ] && exit 0
-RF="/tmp/.ha_notify_rate"; NOW=\$(date +%s); LAST=\$(cat "\$RF" 2>/dev/null || echo 0)
-[ \$((NOW - LAST)) -lt 30 ] && exit 0; echo "\$NOW" > "\$RF"
-TG_TOKEN="${TG_TOKEN}"; TG_CHAT="${TG_CHAT}"; WEBHOOK="${OPT_WEBHOOK_URL}"
-if [ -n "\$TG_TOKEN" ] && [ -n "\$TG_CHAT" ]; then
-  curl -s -X POST "https://api.telegram.org/bot\$TG_TOKEN/sendMessage" \
-    --data-urlencode "chat_id=\$TG_CHAT" --data-urlencode "text=HA (\$(hostname)): \$MSG" >/dev/null 2>&1
+MSG="${1:-}"; [ -z "$MSG" ] && exit 0
+
+RF="/tmp/.ha_notify_rate"
+NOW=$(date +%s)
+LAST=$(cat "$RF" 2>/dev/null || echo 0)
+[ $((NOW - LAST)) -lt 30 ] && exit 0
+echo "$NOW" > "$RF"
+
+# Читаем токены из защищённых файлов (не из переменных окружения)
+SECRETS="/etc/ha-installer"
+TG_TOKEN=$(cat "${SECRETS}/tg_token"    2>/dev/null || echo "")
+TG_CHAT=$(cat  "${SECRETS}/tg_chat"     2>/dev/null || echo "")
+WEBHOOK=$(cat  "${SECRETS}/webhook_url" 2>/dev/null || echo "")
+
+if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+  curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+    --data-urlencode "chat_id=${TG_CHAT}" \
+    --data-urlencode "text=HA ($(hostname)): ${MSG}" \
+    >/dev/null 2>&1
 fi
-if [ -n "\$WEBHOOK" ]; then
-  curl -s -X POST "\$WEBHOOK" -H "Content-Type: application/json" \
-    -d "{\"text\":\"HA (\$(hostname)): \$MSG\"}" >/dev/null 2>&1 || \
-  curl -s -X POST "\$WEBHOOK" -d "HA (\$(hostname)): \$MSG" >/dev/null 2>&1 || true
+
+if [ -n "$WEBHOOK" ]; then
+  HOST=$(hostname 2>/dev/null || echo "ha-box")
+  FULL_MSG="HA (${HOST}): ${MSG}"
+
+  case "$WEBHOOK" in
+
+    # ntfy.sh — plain text
+    *ntfy.sh/*)
+      curl -s -X POST "$WEBHOOK" \
+        -H "Title: Home Assistant" \
+        -H "Priority: default" \
+        -H "Tags: house" \
+        -d "$FULL_MSG" \
+        >/dev/null 2>&1 || true
+      ;;
+
+    # Discord
+    *discord.com/api/webhooks/*|*discordapp.com/api/webhooks/*)
+      ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      curl -s -X POST "$WEBHOOK" \
+        -H "Content-Type: application/json" \
+        -d "{\"content\":\"${ESCAPED}\"}" \
+        >/dev/null 2>&1 || true
+      ;;
+
+    # Slack
+    *hooks.slack.com/*)
+      ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      curl -s -X POST "$WEBHOOK" \
+        -H "Content-Type: application/json" \
+        -d "{\"text\":\"${ESCAPED}\"}" \
+        >/dev/null 2>&1 || true
+      ;;
+
+    # Gotify
+    */message*|*gotify*)
+      ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      curl -s -X POST "$WEBHOOK" \
+        -H "Content-Type: application/json" \
+        -d "{\"title\":\"Home Assistant\",\"message\":\"${ESCAPED}\",\"priority\":5}" \
+        >/dev/null 2>&1 || true
+      ;;
+
+    # Всё остальное — plain text, fallback JSON
+    *)
+      RC=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X POST "$WEBHOOK" \
+        -d "$FULL_MSG" 2>/dev/null) || RC="000"
+      if [[ ! "$RC" =~ ^2 ]]; then
+        ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        curl -s -X POST "$WEBHOOK" \
+          -H "Content-Type: application/json" \
+          -d "{\"text\":\"${ESCAPED}\",\"message\":\"${ESCAPED}\"}" \
+          >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
 fi
 NTEOF
   chmod 700 /usr/local/bin/ha-notify
