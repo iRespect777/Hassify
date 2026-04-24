@@ -127,10 +127,20 @@ header() {
   local b="================================================================"
 
   # ${#t} считает байты, а не символы отображения.
-  # Кириллица в UTF-8: 2 байта на символ, но занимает 1 колонку.
-  # wc -m считает реальные символы Unicode.
+  # В UTF-8 кириллица = 2 байта на символ, но занимает 1 колонку.
+  # wc -m считает Unicode codepoints — правильное число для выравнивания.
+  # LC_ALL=en_US.UTF-8 гарантирует правильный подсчёт независимо
+  # от системной локали (в локали C wc -m считает байты как ${#t}).
   local char_count
-  char_count=$(printf '%s' "$t" | wc -m 2>/dev/null || echo "${#t}")
+  char_count=$(printf '%s' "$t" \
+    | LC_ALL=en_US.UTF-8 wc -m 2>/dev/null \
+    || printf '%s' "$t" | wc -m 2>/dev/null)
+  # Убираем пробелы и переносы строк которые добавляет wc
+  char_count="${char_count//[^0-9]/}"
+  # Fallback если wc -m не дал результат или вернул 0
+  if [ -z "$char_count" ] || [ "$char_count" -eq 0 ] 2>/dev/null; then
+    char_count="${#t}"
+  fi
 
   local p=$(( 60 - char_count ))
   [ "$p" -lt 0 ] && p=0
@@ -440,9 +450,9 @@ import_config() {
 # ============================================================================
 # NOTIFICATIONS
 # ============================================================================
-# ============================================================================
-# WEBHOOK — умная отправка под разные сервисы
-# ============================================================================
+# _send_webhook — умная отправка webhook.
+# Определяет тип сервиса по URL и использует правильный формат.
+# Вызывается из send_notification() и test_notifications().
 _send_webhook() {
   local url="$1"
   local msg="$2"
@@ -450,10 +460,11 @@ _send_webhook() {
   host=$(hostname 2>/dev/null || echo "ha-box")
   local full_msg="HA (${host}): ${msg}"
 
-  # Определяем тип сервиса по URL
   case "$url" in
 
-    # --- ntfy.sh — plain text в body, заголовки для красоты ---
+    # ntfy.sh ожидает plain text в body.
+    # JSON она не парсит — выводит как есть, что выглядит некрасиво.
+    # Заголовки Title и Tags добавляют иконку и заголовок уведомления.
     *ntfy.sh/*)
       curl -s -X POST "$url" \
         -H "Title: Home Assistant" \
@@ -463,59 +474,56 @@ _send_webhook() {
         >/dev/null 2>&1 || true
       ;;
 
-    # --- Discord — JSON с полем "content" ---
+    # Discord ожидает JSON с полем "content"
     *discord.com/api/webhooks/*|*discordapp.com/api/webhooks/*)
-      local json
-      # Экранируем кавычки и обратные слеши в сообщении
-      local escaped_msg
-      escaped_msg=$(printf '%s' "$full_msg" \
+      local escaped
+      escaped=$(printf '%s' "$full_msg" \
         | sed 's/\\/\\\\/g; s/"/\\"/g')
-      json="{\"content\":\"${escaped_msg}\"}"
       curl -s -X POST "$url" \
         -H "Content-Type: application/json" \
-        -d "$json" \
+        -d "{\"content\":\"${escaped}\"}" \
         >/dev/null 2>&1 || true
       ;;
 
-    # --- Slack — JSON с полем "text" ---
+    # Slack ожидает JSON с полем "text"
     *hooks.slack.com/*)
-      local escaped_msg
-      escaped_msg=$(printf '%s' "$full_msg" \
+      local escaped
+      escaped=$(printf '%s' "$full_msg" \
         | sed 's/\\/\\\\/g; s/"/\\"/g')
       curl -s -X POST "$url" \
         -H "Content-Type: application/json" \
-        -d "{\"text\":\"${escaped_msg}\"}" \
+        -d "{\"text\":\"${escaped}\"}" \
         >/dev/null 2>&1 || true
       ;;
 
-    # --- Gotify — JSON с полями "title" и "message" ---
+    # Gotify ожидает JSON с полями "title" и "message"
     */message*|*gotify*)
-      local escaped_msg
-      escaped_msg=$(printf '%s' "$full_msg" \
+      local escaped
+      escaped=$(printf '%s' "$full_msg" \
         | sed 's/\\/\\\\/g; s/"/\\"/g')
       curl -s -X POST "$url" \
         -H "Content-Type: application/json" \
-        -d "{\"title\":\"Home Assistant\",\"message\":\"${escaped_msg}\",\"priority\":5}" \
+        -d "{\"title\":\"Home Assistant\",\"message\":\"${escaped}\",\"priority\":5}" \
         >/dev/null 2>&1 || true
       ;;
 
-    # --- Все остальные — сначала plain text, fallback на JSON ---
+    # Всё остальное — сначала plain text, fallback на JSON.
+    # Так работает большинство self-hosted решений.
     *)
-      # Пробуем plain text (работает для большинства self-hosted решений)
       local rc
       rc=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST "$url" \
         -d "$full_msg" \
         2>/dev/null) || rc="000"
-
-      # Если plain text не принят (не 2xx) — пробуем JSON
+      # Защита от пустого rc если curl не запустился
+      rc="${rc:-000}"
       if [[ ! "$rc" =~ ^2 ]]; then
-        local escaped_msg
-        escaped_msg=$(printf '%s' "$full_msg" \
+        local escaped
+        escaped=$(printf '%s' "$full_msg" \
           | sed 's/\\/\\\\/g; s/"/\\"/g')
         curl -s -X POST "$url" \
           -H "Content-Type: application/json" \
-          -d "{\"text\":\"${escaped_msg}\",\"message\":\"${escaped_msg}\"}" \
+          -d "{\"text\":\"${escaped}\",\"message\":\"${escaped}\"}" \
           >/dev/null 2>&1 || true
       fi
       ;;
@@ -526,20 +534,23 @@ send_notification() {
   local msg="$1"
 
   # --- Telegram ---
-  if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ] && [ "$TG_TOKEN" != "__HA_TG_TOKEN__" ]; then
+  if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ] && \
+     [ "$TG_TOKEN" != "__HA_TG_TOKEN__" ]; then
     local rf="/tmp/.ha_notify_rate"
     local now; now=$(date +%s)
     local last; last=$(cat "$rf" 2>/dev/null || echo 0)
     if [ $((now - last)) -ge 30 ]; then
       echo "$now" > "$rf"
-      curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+      curl -s -X POST \
+        "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
         --data-urlencode "chat_id=${TG_CHAT}" \
         --data-urlencode "text=HA ($(hostname)): ${msg}" \
         >/dev/null 2>&1
     fi
   fi
 
-  # --- Webhook (ntfy.sh / Discord / Slack / custom) ---
+  # --- Webhook ---
+  # Делегируем в _send_webhook которая знает формат каждого сервиса
   if [ -n "$OPT_WEBHOOK_URL" ]; then
     _send_webhook "$OPT_WEBHOOK_URL" "$msg"
   fi
@@ -558,17 +569,41 @@ test_notifications() {
   fi
   if [ -n "$OPT_WEBHOOK_URL" ]; then
     msg_action "Тест webhook..."
-
-    # Используем умную отправку вместо прямого curl
-    _send_webhook "$OPT_WEBHOOK_URL" "тест уведомление от установщика"
-
-    # Проверяем доступность URL отдельно для определения статуса
-    local rc
-    rc=$(curl -s -o /dev/null -w "%{http_code}" \
-      -X POST "$OPT_WEBHOOK_URL" \
-      -d "HA Installer: тест" \
-      2>/dev/null) || rc="000"
-
+    # Один запрос — отправляем тест и получаем HTTP код.
+    # Формат запроса соответствует типу сервиса.
+    # Это избегает двойной отправки (тест + проверка статуса).
+    local rc="000"
+    case "$OPT_WEBHOOK_URL" in
+      *ntfy.sh/*)
+        rc=$(curl -s -o /dev/null -w "%{http_code}" \
+          -X POST "$OPT_WEBHOOK_URL" \
+          -H "Title: Home Assistant" \
+          -H "Tags: house" \
+          -d "HA Installer: тест уведомление" \
+          2>/dev/null) || rc="000"
+        ;;
+      *discord.com/api/webhooks/*|*discordapp.com/api/webhooks/*)
+        rc=$(curl -s -o /dev/null -w "%{http_code}" \
+          -X POST "$OPT_WEBHOOK_URL" \
+          -H "Content-Type: application/json" \
+          -d '{"content":"HA Installer: тест уведомление"}' \
+          2>/dev/null) || rc="000"
+        ;;
+      *hooks.slack.com/*)
+        rc=$(curl -s -o /dev/null -w "%{http_code}" \
+          -X POST "$OPT_WEBHOOK_URL" \
+          -H "Content-Type: application/json" \
+          -d '{"text":"HA Installer: тест уведомление"}' \
+          2>/dev/null) || rc="000"
+        ;;
+      *)
+        rc=$(curl -s -o /dev/null -w "%{http_code}" \
+          -X POST "$OPT_WEBHOOK_URL" \
+          -d "HA Installer: тест уведомление" \
+          2>/dev/null) || rc="000"
+        ;;
+    esac
+    rc="${rc:-000}"
     if [[ "$rc" =~ ^2 ]]; then
       msg_ok "Webhook OK (${rc})"
     else
@@ -732,31 +767,55 @@ estimate_install_time() {
 # SAFE SCRIPT PATH
 # =========================================================================
 ensure_safe_script_path() {
-  # Копирует скрипт в постоянное место, если его там нет
-  # или если он отличается от текущего (например запущен из /tmp)
   local src
   src=$(readlink -f "$0" 2>/dev/null || echo "$0")
 
-  # Если скрипт уже запущен из SAFE_SCRIPT_PATH — ничего не делаем
+  # Защита: если $0 это интерпретатор (bash/sh), а не скрипт.
+  # Такое бывает при запуске командой: bash /tmp/install.sh
+  # В этом случае $0 = /bin/bash, а не путь к скрипту.
+  case "$src" in
+    */bin/bash|*/bin/sh|*/usr/bin/bash|*/usr/bin/sh)
+      # Ищем реальный путь к скрипту через аргументы процесса.
+      # /proc/$$/cmdline содержит argv[] разделённые нулевым байтом.
+      # tr '\0' '\n' разбивает на отдельные строки — надёжнее чем пробел,
+      # потому что аргументы сами могут содержать пробелы.
+      # grep ищет только .sh файлы или конкретные имена нашего скрипта,
+      # исключая системный /usr/bin/install и флаги начинающиеся с -.
+      local proc_src
+      proc_src=$(cat /proc/$$/cmdline 2>/dev/null \
+        | tr '\0' '\n' \
+        | grep -E '\.sh$|/install\.sh$|/ha-install$' \
+        | grep -v '^-' \
+        | head -1)
+      [ -n "$proc_src" ] && \
+        src=$(readlink -f "$proc_src" 2>/dev/null || echo "$proc_src")
+      ;;
+  esac
+
+  # Если скрипт уже запущен из правильного места — ничего не делаем
   if [ "$src" = "$SAFE_SCRIPT_PATH" ]; then
     return 0
   fi
 
-  # Проверяем что исходный файл существует и читаем
+  # Исходный файл должен существовать и быть читаемым
   if [ ! -f "$src" ]; then
-    msg_warn "ensure_safe_script_path: исходный файл не найден: ${src}"
+    msg_warn "ensure_safe_script_path: файл не найден: ${src}"
     return 1
   fi
 
-  # Копируем только если файлы отличаются
-  if ! cmp -s "$src" "$SAFE_SCRIPT_PATH" 2>/dev/null; then
+  # Копируем если:
+  # - файл ещё не существует в SAFE_SCRIPT_PATH
+  # - или содержимое отличается от текущего скрипта
+  if [ ! -f "$SAFE_SCRIPT_PATH" ] || \
+     ! cmp -s "$src" "$SAFE_SCRIPT_PATH" 2>/dev/null; then
     mkdir -p "$(dirname "$SAFE_SCRIPT_PATH")"
-    cp "$src" "$SAFE_SCRIPT_PATH" 2>/dev/null || {
+    if cp "$src" "$SAFE_SCRIPT_PATH" 2>/dev/null; then
+      chmod +x "$SAFE_SCRIPT_PATH"
+      msg_dim "Скрипт сохранён: ${SAFE_SCRIPT_PATH}"
+    else
       msg_warn "Не удалось скопировать скрипт в ${SAFE_SCRIPT_PATH}"
       return 1
-    }
-    chmod +x "$SAFE_SCRIPT_PATH"
-    msg_dim "Скрипт сохранён: ${SAFE_SCRIPT_PATH}"
+    fi
   fi
 
   return 0
@@ -767,7 +826,8 @@ setup_reboot_continue() {
     ensure_safe_script_path
     local svc_file="/etc/systemd/system/${REBOOT_CONTINUE_SVC}.service"
     local attempts=0
-    [ -f "$REBOOT_ATTEMPT_FILE" ] && attempts=$(cat "$REBOOT_ATTEMPT_FILE" 2>/dev/null || echo 0)
+    [ -f "$REBOOT_ATTEMPT_FILE" ] && \
+        attempts=$(cat "$REBOOT_ATTEMPT_FILE" 2>/dev/null || echo 0)
 
     if [ "$attempts" -ge 3 ]; then
         msg_error "Превышен лимит перезагрузок (3)"
@@ -777,6 +837,27 @@ setup_reboot_continue() {
 
     echo $((attempts + 1)) > "$REBOOT_ATTEMPT_FILE"
 
+    # Формируем аргументы явно и безопасно для systemd.
+    # Не передаём $* или $@ целиком — systemd не понимает
+    # shell-кавычки и сломает аргументы содержащие пробелы.
+    # Передаём только флаги которые нужны для продолжения.
+    local exec_args="--from-step=${continue_from}"
+
+    [ "$SILENT" = true ] && \
+        exec_args="${exec_args} --silent"
+    [ "$SKIP_UPDATE" = true ] && \
+        exec_args="${exec_args} --skip-update"
+    [ "$OPT_AUTO_REBOOT" = true ] && \
+        exec_args="${exec_args} --auto-reboot"
+    [ -n "$PROFILE" ] && \
+        exec_args="${exec_args} --profile ${PROFILE}"
+    [ -n "$HA_MACHINE" ] && \
+        exec_args="${exec_args} --machine ${HA_MACHINE}"
+    [ -n "$OVERRIDE_OS_AGENT_VER" ] && \
+        exec_args="${exec_args} --os-agent-ver ${OVERRIDE_OS_AGENT_VER}"
+    [ -n "$OVERRIDE_HA_VER" ] && \
+        exec_args="${exec_args} --ha-ver ${OVERRIDE_HA_VER}"
+
     cat > "$svc_file" << SVCEOF
 [Unit]
 Description=HA Installer - продолжение после перезагрузки
@@ -785,7 +866,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash ${SAFE_SCRIPT_PATH} ${ORIGINAL_ARGS} --from-step=${continue_from}
+ExecStart=/bin/bash ${SAFE_SCRIPT_PATH} ${exec_args}
 ExecStartPost=/bin/rm -f ${svc_file}
 RemainAfterExit=no
 StandardOutput=append:${LOG_DIR}/ha_install_reboot.log
@@ -1722,8 +1803,31 @@ _wizard_select_components() {
 # MAIN WIZARD (ESC on any step = restart or exit)
 # ============================================================================
 run_wizard() {
+  # Все локальные переменные объявляем в начале функции.
+  # Это стандартная практика в bash — избегает случайного
+  # использования глобальных переменных с теми же именами.
   local HAS_WHIPTAIL=false
   local prof=""
+  local wizard_mode=""
+  local prof_title=""
+  local curtz=""
+  local curloc=""
+  local eff_ram=""
+  local swap_rec=""
+  local has_wifi=false
+  local do_wifi=false
+  local do_restore=false
+  local found=""
+  local wl=""
+  local notif="none"
+  local topic=""
+  local dw=""
+  local cip=""
+  local cgw=""
+  local mi=""
+  local qs=""
+  local s=""
+
   command -v whiptail &>/dev/null && HAS_WHIPTAIL=true
   [ "$HAS_WHIPTAIL" = false ] && {
     apt-get update -qq 2>/dev/null && apt-get install -y whiptail -qq 2>/dev/null && HAS_WHIPTAIL=true
@@ -1813,7 +1917,7 @@ run_wizard() {
       _wizard_select_components || { _wizard_cancelled && return 1 || exit 0; }
 
       # Custom-specific: locale
-      local curloc; curloc=$(locale 2>/dev/null | awk -F= '/^LANG=/{print $2}') || curloc="C.UTF-8"
+      curloc=$(locale 2>/dev/null | awk -F= '/^LANG=/{print $2}') || curloc="C.UTF-8"
       if [ "$HAS_WHIPTAIL" = true ]; then
         if whiptail --title "Локаль" --yesno "Сменить локаль?\nТекущая: ${curloc}" 10 50 --defaultno 2>/dev/null; then
           OPT_LOCALE=$(_whip_input "Локаль" "Например: ru_RU.UTF-8" "$curloc") || OPT_LOCALE=""
@@ -1838,7 +1942,7 @@ run_wizard() {
   # =============================================
   # STEP 3: TIMEZONE
   # =============================================
-  local curtz; curtz=$(timedatectl 2>/dev/null | awk '/Time zone/{print $3}') || curtz="UTC"
+  curtz=$(timedatectl 2>/dev/null | awk '/Time zone/{print $3}') || curtz="UTC"
   if [ "$HAS_WHIPTAIL" = true ]; then
     OPT_TIMEZONE=$(_whip_input "Часовой пояс" "Например: Europe/Moscow\nТекущий: ${curtz}" "$curtz")
     [ $? -ne 0 ] && { _wizard_cancelled && return 1 || exit 0; }
@@ -1892,7 +1996,7 @@ run_wizard() {
   local dw=""; [ "$disk_mb" -lt 20000 ] && dw=" (Внимание: только ${disk_mb}МБ!)"
   if [ "$HAS_WHIPTAIL" = true ]; then
     if whiptail --title "Внешний диск" --yesno "Перенести данные на внешний диск?${dw}\n\nРекомендуется для eMMC < 32ГБ" 12 60 --defaultno 2>/dev/null; then
-      local mi; mi=$(lsblk -o NAME,SIZE,MOUNTPOINT,FSTYPE 2>/dev/null | grep -E "sd|nvme" | head -10)
+      mi=$(lsblk -o NAME,SIZE,MOUNTPOINT,FSTYPE 2>/dev/null | grep -E "sd|nvme" | head -10)
       OPT_DATA_DIR=$(_whip_input "Путь к данным" "${mi}" "/mnt/data") || OPT_DATA_DIR=""
     fi
   else
@@ -2469,8 +2573,14 @@ step_configure_network() {
   if who 2>/dev/null | grep -q pts; then
     msg_warn "SSH-сессия! Переключение сети..."
     if [ "$SILENT" = true ] || [ "$DRY_RUN" = true ]; then
-      msg_dim "Silent/dry-run: пауза пропущена"
+      # В тихом или тестовом режиме пауза не нужна
+      msg_dim "Silent/dry-run режим: пауза пропущена"
+    elif [ -n "$FROM_STEP" ]; then
+      # Продолжение после перезагрузки — сеть уже переключена
+      # на предыдущем запуске, пауза не нужна
+      msg_dim "Продолжение после reboot: пауза пропущена"
     else
+      # Обычный запуск через SSH — даём время завершить операции
       msg_dim "Пауза 15с для завершения активных SSH операций..."
       sleep 15
     fi
@@ -3164,14 +3274,15 @@ step_extras() {
   systemctl start avahi-daemon >/dev/null 2>&1 || true
   msg_ok "mDNS (avahi)"
 
-  # --- ha-notify (только root) ---
-  # Безопасное сохранение токенов в отдельный защищённый файл
-  # Это исключает инъекцию через специальные символы в токене/chat_id
-  local secrets_dir="/etc/ha-installer"
+  # --- ha-notify ---
+  # Токены сохраняем в отдельные защищённые файлы.
+  # Это исключает инъекцию через спецсимволы в токене
+  # и не хранит секреты в открытом виде в теле скрипта.
+  # Используем HA_INSTALLER_DIR который уже создан в setup_dirs().
+  local secrets_dir="${HA_INSTALLER_DIR}/secrets"
   mkdir -p "$secrets_dir"
   chmod 700 "$secrets_dir"
-
-  # Записываем каждое значение отдельной строкой — никакой интерполяции в heredoc
+  # printf '%s' не добавляет перевод строки в отличие от echo
   printf '%s' "${TG_TOKEN}"        > "${secrets_dir}/tg_token"
   printf '%s' "${TG_CHAT}"         > "${secrets_dir}/tg_chat"
   printf '%s' "${OPT_WEBHOOK_URL}" > "${secrets_dir}/webhook_url"
@@ -3179,37 +3290,46 @@ step_extras() {
             "${secrets_dir}/tg_chat" \
             "${secrets_dir}/webhook_url"
 
-  # Скрипт читает токены из файлов — без подстановки небезопасных значений
+  # Heredoc с кавычками << 'NTEOF' означает что bash НЕ делает
+  # никаких подстановок внутри — всё записывается буквально.
+  # Токены скрипт читает сам из файлов при каждом вызове.
   cat > /usr/local/bin/ha-notify << 'NTEOF'
 #!/bin/bash
-MSG="${1:-}"; [ -z "$MSG" ] && exit 0
+MSG="${1:-}"
+[ -z "$MSG" ] && exit 0
 
+# Защита от частых уведомлений — не чаще одного раза в 30 секунд
 RF="/tmp/.ha_notify_rate"
 NOW=$(date +%s)
 LAST=$(cat "$RF" 2>/dev/null || echo 0)
 [ $((NOW - LAST)) -lt 30 ] && exit 0
 echo "$NOW" > "$RF"
 
-# Читаем токены из защищённых файлов (не из переменных окружения)
-SECRETS="/etc/ha-installer"
+# Читаем токены из защищённых файлов.
+# Путь совпадает с HA_INSTALLER_DIR/secrets из установщика.
+SECRETS="/var/lib/ha-installer/secrets"
 TG_TOKEN=$(cat "${SECRETS}/tg_token"    2>/dev/null || echo "")
 TG_CHAT=$(cat  "${SECRETS}/tg_chat"     2>/dev/null || echo "")
 WEBHOOK=$(cat  "${SECRETS}/webhook_url" 2>/dev/null || echo "")
 
+HOST=$(hostname 2>/dev/null || echo "ha-box")
+FULL_MSG="HA (${HOST}): ${MSG}"
+
+# --- Telegram ---
 if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
   curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
     --data-urlencode "chat_id=${TG_CHAT}" \
-    --data-urlencode "text=HA ($(hostname)): ${MSG}" \
+    --data-urlencode "text=${FULL_MSG}" \
     >/dev/null 2>&1
 fi
 
+# --- Webhook (ntfy / Discord / Slack / Gotify / custom) ---
 if [ -n "$WEBHOOK" ]; then
-  HOST=$(hostname 2>/dev/null || echo "ha-box")
-  FULL_MSG="HA (${HOST}): ${MSG}"
-
   case "$WEBHOOK" in
 
-    # ntfy.sh — plain text
+    # ntfy.sh ожидает plain text в body запроса.
+    # JSON она не парсит — отображает как есть.
+    # Заголовки Title и Tags добавляют красивое оформление.
     *ntfy.sh/*)
       curl -s -X POST "$WEBHOOK" \
         -H "Title: Home Assistant" \
@@ -3219,40 +3339,47 @@ if [ -n "$WEBHOOK" ]; then
         >/dev/null 2>&1 || true
       ;;
 
-    # Discord
+    # Discord ожидает JSON с полем "content"
     *discord.com/api/webhooks/*|*discordapp.com/api/webhooks/*)
-      ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      ESCAPED=$(printf '%s' "$FULL_MSG" \
+        | sed 's/\\/\\\\/g; s/"/\\"/g')
       curl -s -X POST "$WEBHOOK" \
         -H "Content-Type: application/json" \
         -d "{\"content\":\"${ESCAPED}\"}" \
         >/dev/null 2>&1 || true
       ;;
 
-    # Slack
+    # Slack ожидает JSON с полем "text"
     *hooks.slack.com/*)
-      ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      ESCAPED=$(printf '%s' "$FULL_MSG" \
+        | sed 's/\\/\\\\/g; s/"/\\"/g')
       curl -s -X POST "$WEBHOOK" \
         -H "Content-Type: application/json" \
         -d "{\"text\":\"${ESCAPED}\"}" \
         >/dev/null 2>&1 || true
       ;;
 
-    # Gotify
+    # Gotify ожидает JSON с полями "title" и "message"
     */message*|*gotify*)
-      ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      ESCAPED=$(printf '%s' "$FULL_MSG" \
+        | sed 's/\\/\\\\/g; s/"/\\"/g')
       curl -s -X POST "$WEBHOOK" \
         -H "Content-Type: application/json" \
         -d "{\"title\":\"Home Assistant\",\"message\":\"${ESCAPED}\",\"priority\":5}" \
         >/dev/null 2>&1 || true
       ;;
 
-    # Всё остальное — plain text, fallback JSON
+    # Всё остальное — сначала пробуем plain text.
+    # Если сервер не принял (не 2xx) — пробуем JSON.
     *)
       RC=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST "$WEBHOOK" \
-        -d "$FULL_MSG" 2>/dev/null) || RC="000"
+        -d "$FULL_MSG" \
+        2>/dev/null) || RC="000"
+      RC="${RC:-000}"
       if [[ ! "$RC" =~ ^2 ]]; then
-        ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        ESCAPED=$(printf '%s' "$FULL_MSG" \
+          | sed 's/\\/\\\\/g; s/"/\\"/g')
         curl -s -X POST "$WEBHOOK" \
           -H "Content-Type: application/json" \
           -d "{\"text\":\"${ESCAPED}\",\"message\":\"${ESCAPED}\"}" \
@@ -3607,24 +3734,37 @@ step_hacs() {
   local hacs_ok=false
 
   # Способ 1: wget внутри контейнера
-  if [ "$hacs_ok" = false ] && docker exec homeassistant which wget &>/dev/null; then
+  if [ "$hacs_ok" = false ] && \
+     docker exec homeassistant which wget &>/dev/null; then
     msg_dim "Способ 1: wget..."
-    # Запускаем docker exec в фоне
     docker exec homeassistant bash -c \
       "wget -q -O- https://get.hacs.xyz | bash -" \
       >/dev/null 2>&1 &
     local hp=$!
     local hw=0
     while kill -0 "$hp" 2>/dev/null; do
-      sleep 5; hw=$((hw+5))
+      sleep 5
+      hw=$((hw + 5))
       if [ $hw -ge 180 ]; then
-        # kill убивает только docker exec на хосте.
-        # Дополнительно останавливаем процесс внутри контейнера.
+        # kill "$hp" убивает только docker exec на хосте.
+        # Процесс внутри контейнера продолжит работу без этого блока.
         kill "$hp" 2>/dev/null || true
-        # Убиваем wget/bash внутри контейнера по имени
-        docker exec homeassistant \
-          bash -c "pkill -f 'get.hacs.xyz' 2>/dev/null; pkill wget 2>/dev/null" \
-          2>/dev/null || true
+        # Останавливаем процессы внутри контейнера.
+        # pkill может отсутствовать — пробуем оба способа.
+        # ВАЖНО: в ps aux поле $2 это PID, не $1 (это USER).
+        docker exec homeassistant bash -c "
+          if command -v pkill >/dev/null 2>&1; then
+            pkill -f 'get.hacs.xyz' 2>/dev/null || true
+            pkill wget 2>/dev/null || true
+          fi
+          if command -v ps >/dev/null 2>&1; then
+            ps aux 2>/dev/null \
+              | grep -E 'get.hacs|wget' \
+              | grep -v grep \
+              | awk '{print \$2}' \
+              | xargs -r kill 2>/dev/null || true
+          fi
+        " 2>/dev/null || true
         break
       fi
     done
@@ -3632,7 +3772,8 @@ step_hacs() {
   fi
 
   # Способ 2: curl внутри контейнера
-  if [ "$hacs_ok" = false ] && docker exec homeassistant which curl &>/dev/null; then
+  if [ "$hacs_ok" = false ] && \
+     docker exec homeassistant which curl &>/dev/null; then
     msg_dim "Способ 2: curl..."
     docker exec homeassistant bash -c \
       "curl -fsSL https://get.hacs.xyz | bash -" \
@@ -3640,13 +3781,23 @@ step_hacs() {
     local hp=$!
     local hw=0
     while kill -0 "$hp" 2>/dev/null; do
-      sleep 5; hw=$((hw+5))
+      sleep 5
+      hw=$((hw + 5))
       if [ $hw -ge 180 ]; then
         kill "$hp" 2>/dev/null || true
-        # Убиваем curl/bash внутри контейнера
-        docker exec homeassistant \
-          bash -c "pkill -f 'get.hacs.xyz' 2>/dev/null; pkill curl 2>/dev/null" \
-          2>/dev/null || true
+        docker exec homeassistant bash -c "
+          if command -v pkill >/dev/null 2>&1; then
+            pkill -f 'get.hacs.xyz' 2>/dev/null || true
+            pkill curl 2>/dev/null || true
+          fi
+          if command -v ps >/dev/null 2>&1; then
+            ps aux 2>/dev/null \
+              | grep -E 'get.hacs|curl' \
+              | grep -v grep \
+              | awk '{print \$2}' \
+              | xargs -r kill 2>/dev/null || true
+          fi
+        " 2>/dev/null || true
         break
       fi
     done
@@ -4076,59 +4227,99 @@ do_rescue() {
 # ОПЕРАЦИИ: МОНИТОРИНГ (live)
 # ============================================================================
 do_status() {
-  # Кэшируем тяжёлые данные — обновляем раз в 30с
-  # Лёгкие данные (температура, RAM) — каждые 5с
-  local ip hc=""
+  # Тяжёлые данные (curl к HA, hostname -I) кэшируем — обновляем раз в 30с.
+  # Лёгкие данные (температура, RAM, uptime) обновляем каждые 5с.
+  local ip=""
+  local hc="000"
   local cache_tick=0
-  local cache_interval=6  # каждые 6 итераций по 5с = 30с
+  # 6 итераций × 5с = 30с между тяжёлыми запросами
+  local cache_interval=6
 
-  # Первичное получение тяжёлых данных
+  # Обработка Ctrl+C — выходим чисто без мусора в терминале.
+  # После return восстанавливаем глобальный обработчик INT.
+  trap 'echo ""; echo -e " ${WARN} Мониторинг остановлен"; trap handle_interrupt INT; return 0' INT
+
+  # Первичное получение тяжёлых данных до начала цикла
   ip=$(hostname -I 2>/dev/null | awk '{print $1}') || ip="?"
-  hc=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://localhost:8123 2>/dev/null || echo 000)
+  hc=$(curl -s -o /dev/null -w "%{http_code}" \
+    -m 3 http://localhost:8123 2>/dev/null || echo 000)
+  hc="${hc:-000}"
 
   while true; do
-    clear
 
-    # Тяжёлые данные — обновляем раз в 30с
-    if [ $cache_tick -eq 0 ]; then
+    # Обновляем тяжёлые данные раз в 30с
+    if [ "$cache_tick" -eq 0 ]; then
       ip=$(hostname -I 2>/dev/null | awk '{print $1}') || ip="?"
-      hc=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://localhost:8123 2>/dev/null || echo 000)
+      hc=$(curl -s -o /dev/null -w "%{http_code}" \
+        -m 3 http://localhost:8123 2>/dev/null || echo 000)
+      hc="${hc:-000}"
     fi
     cache_tick=$(( (cache_tick + 1) % cache_interval ))
 
-    # Шапка (без show_banner — он делает curl и clear)
-    echo -e "${BLUE}+================================================================+${NC}"
-    echo -e "${BLUE}|${WHITE}${BOLD} HA Установщик v${SCRIPT_VERSION} — Мониторинг${NC}${BLUE}|${NC}"
-    echo -e "${BLUE}+================================================================+${NC}"
+    clear
 
-    # Лёгкие данные — каждый раз
+    # Ширина терминала: минимум 40, максимум 80 символов
+    local cols
+    cols=$(tput cols 2>/dev/null || echo 70)
+    [ "$cols" -gt 80 ] && cols=80
+    [ "$cols" -lt 40 ] && cols=40
+    local sep
+    sep=$(printf '%*s' "$cols" '' | tr ' ' '-')
+
+    # Шапка — без show_banner (он делает curl и clear внутри)
+    echo -e "${BLUE}${sep}${NC}"
+    echo -e "${WHITE}${BOLD}  HA Установщик v${SCRIPT_VERSION} — Мониторинг${NC}"
+    echo -e "${BLUE}${sep}${NC}"
+
+    # Лёгкие данные — обновляются каждые 5с
     local t
     t=$(get_cpu_temp)
-    echo -e "   ${BOLD}IP:${NC} ${ip}  ${BOLD}CPU:${NC} ${t:-?}C  ${BOLD}Работает:${NC} $(uptime -p 2>/dev/null || echo ?)"
-    echo -e "   ${BOLD}RAM:${NC} $(free -h | awk '/Mem:/{printf "%s/%s",$3,$2}')  ${BOLD}Swap:${NC} $(free -h | awk '/Swap:/{printf "%s/%s",$3,$2}')"
+    printf "  ${BOLD}%-10s${NC} %s\n" "IP:"       "${ip:-?}"
+    printf "  ${BOLD}%-10s${NC} %s\n" "Работает:" \
+      "$(uptime -p 2>/dev/null || echo '?')"
+    [ -n "$t" ] && \
+      printf "  ${BOLD}%-10s${NC} %sC\n" "CPU:" "$t"
+    printf "  ${BOLD}%-10s${NC} %s\n" "RAM:" \
+      "$(free -h | awk '/Mem:/{printf "%s/%s",$3,$2}')"
+    printf "  ${BOLD}%-10s${NC} %s\n" "Swap:" \
+      "$(free -h | awk '/Swap:/{printf "%s/%s",$3,$2}')"
 
-    separator
+    echo -e "${DIM}${sep}${NC}"
+    echo -e "  ${BOLD}Контейнеры:${NC}"
 
-    # Контейнеры Docker
-    docker ps --format '{{.Names}}|{{.Status}}' 2>/dev/null \
-    | while IFS='|' read -r n s; do
-      echo "$s" | grep -q "^Up" \
-        && echo -e "   ${CHECK} ${n} ${DIM}${s}${NC}" \
-        || echo -e "   ${CROSS} ${n} ${RED}${s}${NC}"
-    done
+    # Читаем вывод docker ps в переменную — избегаем subshell от pipeline.
+    # При pipeline (docker ps | while) изменения переменных внутри цикла
+    # не видны снаружи, и вывод может буферизоваться иначе.
+    local containers_out
+    containers_out=$(docker ps \
+      --format '{{.Names}}|{{.Status}}' 2>/dev/null)
 
-    separator
-
-    # Статус HA (из кэша)
-    if [ "$hc" = "200" ] || [ "$hc" = "401" ]; then
-      echo -e "   ${CHECK} HA: ${GREEN}OK (${hc})${NC}  http://${ip}:8123"
-    elif [ "$hc" = "000" ]; then
-      echo -e "   ${CROSS} HA: ${RED}недоступен${NC}"
+    if [ -z "$containers_out" ]; then
+      echo -e "  ${CROSS} Контейнеры не запущены"
     else
-      echo -e "   ${WARN}  HA: ${YELLOW}${hc}${NC}"
+      # Читаем из переменной через herestring — без subshell
+      while IFS='|' read -r n s; do
+        [ -z "$n" ] && continue
+        if echo "$s" | grep -q "^Up"; then
+          echo -e "  ${CHECK} ${n} ${DIM}${s}${NC}"
+        else
+          echo -e "  ${CROSS} ${RED}${n}${NC} ${DIM}${s}${NC}"
+        fi
+      done <<< "$containers_out"
     fi
 
-    echo -e "   ${DIM}$(date '+%H:%M:%S') | Ctrl+C для выхода | обновление каждые 5с${NC}"
+    echo -e "${DIM}${sep}${NC}"
+
+    # Статус HA Web из кэша — не делаем curl каждые 5с
+    if [ "$hc" = "200" ] || [ "$hc" = "401" ]; then
+      echo -e "  ${CHECK} HA Web: ${GREEN}OK (${hc})${NC}  →  http://${ip}:8123"
+    elif [ "$hc" = "000" ]; then
+      echo -e "  ${CROSS} HA Web: ${RED}недоступен${NC}"
+    else
+      echo -e "  ${WARN}  HA Web: ${YELLOW}${hc}${NC}"
+    fi
+
+    echo -e "\n  ${DIM}$(date '+%H:%M:%S') | Ctrl+C для выхода | обновление каждые 5с${NC}"
     sleep 5
   done
 }
@@ -4252,14 +4443,27 @@ Docker и сеть останутся.\n\
         docker volume ls --format '{{.Name}}' 2>/dev/null | grep -iE "hassio|homeassistant|home.assistant" | while IFS= read -r v; do
             docker volume rm -f "$v" 2>/dev/null
         done
-        # local нельзя использовать внутри while-pipe, объявляем mp заранее
+        # Читаем volumes в массив через process substitution.
+        # Это избегает subshell от pipeline (cmd | while read).
+        # В subshell от pipeline переменные не видны снаружи цикла,
+        # а local внутри него создаёт переменную только в subshell.
         local mp=""
-        docker volume ls -f dangling=true --format '{{.Name}}' 2>/dev/null | while IFS= read -r v; do
-            mp=$(docker volume inspect "$v" --format '{{.Mountpoint}}' 2>/dev/null)
-            if [ -n "$mp" ] && [ -d "$mp" ] && ls "$mp" 2>/dev/null | grep -qiE "hassio|homeassistant|configuration.yaml"; then
-                docker volume rm -f "$v" 2>/dev/null
-                msg_dim "Удалён volume: ${v}"
-            fi
+        local dangling_volumes=()
+        mapfile -t dangling_volumes < <(
+          docker volume ls -f dangling=true \
+            --format '{{.Name}}' 2>/dev/null
+        )
+        for v in "${dangling_volumes[@]}"; do
+          [ -z "$v" ] && continue
+          mp=$(docker volume inspect "$v" \
+            --format '{{.Mountpoint}}' 2>/dev/null) || continue
+          if [ -n "$mp" ] && [ -d "$mp" ] && \
+             ls "$mp" 2>/dev/null \
+             | grep -qiE "hassio|homeassistant|configuration.yaml"
+          then
+            docker volume rm -f "$v" 2>/dev/null && \
+              msg_dim "Удалён volume: ${v}"
+          fi
         done
 
         # --- Удаление Docker сетей HA ---
@@ -4877,82 +5081,106 @@ do_update() {
 # ============================================================================
 do_self_update() {
   header "ОБНОВЛЕНИЕ СКРИПТА"
-  local latest; latest=$(get_latest_release "$INSTALLER_REPO")
-  [ -z "$latest" ] && { msg_warn "Не удалось проверить"; return; }
-  [ "$SCRIPT_VERSION" = "$latest" ] && { msg_ok "Актуальная версия: ${SCRIPT_VERSION}"; return; }
-  msg_info "Доступно: ${SCRIPT_VERSION} -> ${latest}"
 
+  local latest
+  latest=$(get_latest_release "$INSTALLER_REPO")
+  [ -z "$latest" ] && { msg_warn "Не удалось проверить версию"; return 1; }
+
+  [ "$SCRIPT_VERSION" = "$latest" ] && {
+    msg_ok "Актуальная версия: ${SCRIPT_VERSION}"
+    return 0
+  }
+  msg_info "Доступно обновление: ${SCRIPT_VERSION} -> ${latest}"
+
+  # Интерактивное подтверждение
   if [ -t 0 ]; then
     echo -en "   ${ARROW} Обновить? (д/н): " >&2
     local ans; read -r ans
-    [ "$ans" != "y" ] && [ "$ans" != "Y" ] && [ "$ans" != "д" ] && [ "$ans" != "Д" ] && return
+    case "$ans" in
+      y|Y|д|Д) ;;
+      *) msg_info "Отменено"; return 0 ;;
+    esac
   fi
 
-  # Используем mktemp вместо "${0}.new" — безопасно если $0 это /tmp/... или read-only путь
+  # Скачиваем во временный файл через mktemp.
+  # НЕ используем "${0}.new" — если скрипт запущен из /tmp,
+  # то после обновления он останется в /tmp и потеряется.
   local nf
   nf=$(mktemp /tmp/ha_update_XXXXXX.sh 2>/dev/null) || {
     msg_error "Не удалось создать временный файл"
     return 1
   }
 
-  wget -q -O "$nf" \
+  msg_action "Загрузка v${latest}..."
+  if ! wget -q -O "$nf" \
     "https://raw.githubusercontent.com/${INSTALLER_REPO}/main/install.sh" \
-    2>/dev/null || {
+    2>/dev/null; then
     msg_error "Загрузка не удалась"
     rm -f "$nf"
     return 1
-  }
+  fi
 
-  # Проверяем синтаксис
-  bash -n "$nf" 2>/dev/null || {
-    msg_error "Синтаксическая ошибка в загруженном файле"
-    rm -f "$nf"
-    return 1
-  }
-
-  # Проверяем что это действительно наш скрипт
-  grep -q "SCRIPT_VERSION=" "$nf" || {
-    msg_error "Некорректный файл (нет SCRIPT_VERSION)"
-    rm -f "$nf"
-    return 1
-  }
-
-  # Проверяем минимальный размер (защита от пустых страниц 404)
+  # Проверяем размер — защита от пустых страниц 404
   local sz
-  sz=$(wc -c < "$nf")
+  sz=$(wc -c < "$nf" 2>/dev/null || echo 0)
+  # Убираем пробелы которые может добавить wc
+  sz="${sz//[^0-9]/}"
   if [ "${sz:-0}" -lt 10000 ]; then
     msg_error "Файл слишком мал (${sz}б) — возможно ошибка загрузки"
     rm -f "$nf"
     return 1
   fi
 
-  # Определяем куда сохранять:
-  # Приоритет 1: SAFE_SCRIPT_PATH (/usr/local/bin/ha-install)
-  # Приоритет 2: оригинальный путь $0 если он не /tmp
-  local target_path="$SAFE_SCRIPT_PATH"
-  local real0
-  real0=$(readlink -f "$0" 2>/dev/null || echo "$0")
-  if [ ! -w "$(dirname "$SAFE_SCRIPT_PATH")" ]; then
-    # Нет прав на /usr/local/bin — пишем рядом с $0
-    if [[ "$real0" != /tmp/* ]]; then
-      target_path="$real0"
+  # Проверяем синтаксис bash
+  if ! bash -n "$nf" 2>/dev/null; then
+    msg_error "Синтаксическая ошибка в загруженном файле"
+    rm -f "$nf"
+    return 1
+  fi
+
+  # Проверяем что это наш скрипт а не чужой файл
+  if ! grep -q "SCRIPT_VERSION=" "$nf"; then
+    msg_error "Некорректный файл (нет SCRIPT_VERSION)"
+    rm -f "$nf"
+    return 1
+  fi
+
+  # Проверяем реальную версию в файле
+  local new_ver
+  new_ver=$(grep "^readonly SCRIPT_VERSION=" "$nf" \
+    | head -1 \
+    | cut -d'"' -f2)
+  if [ -z "$new_ver" ]; then
+    msg_error "Не удалось определить версию в загруженном файле"
+    rm -f "$nf"
+    return 1
+  fi
+  msg_info "Версия в файле: ${new_ver}"
+
+  # Сохраняем всегда в SAFE_SCRIPT_PATH (/usr/local/bin/ha-install).
+  # Скрипт запущен от root поэтому проблем с правами нет.
+  local target="$SAFE_SCRIPT_PATH"
+  mkdir -p "$(dirname "$target")"
+  chmod +x "$nf"
+
+  # Пробуем атомарный mv.
+  # Если /tmp и /usr/local/bin на разных ФС — mv выполнит copy+delete,
+  # что не атомарно. В этом случае делаем cp + rm явно.
+  if mv "$nf" "$target" 2>/dev/null; then
+    msg_ok "Обновлён до ${new_ver}: ${target}"
+  else
+    if cp "$nf" "$target" 2>/dev/null; then
+      chmod +x "$target"
+      rm -f "$nf" 2>/dev/null || true
+      msg_ok "Обновлён до ${new_ver}: ${target}"
     else
-      msg_error "Нет подходящего пути для сохранения (запущен из /tmp)"
-      rm -f "$nf"
+      msg_error "Не удалось заменить файл: ${target}"
+      rm -f "$nf" 2>/dev/null || true
       return 1
     fi
   fi
 
-  # Атомарная замена файла
-  chmod +x "$nf"
-  mv "$nf" "$target_path" || {
-    msg_error "Не удалось заменить файл: ${target_path}"
-    rm -f "$nf"
-    return 1
-  }
-
-  msg_ok "Обновлён до ${latest}: ${target_path}"
-  msg_info "Перезапустите скрипт: sudo bash ${target_path}"
+  msg_info "Перезапустите: sudo bash ${target}"
 }
 
 # ============================================================================
