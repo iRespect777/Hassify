@@ -3534,7 +3534,6 @@ set -f
 BD="${HA_BACKUP_DIR}"; HD="${HASSIO_DIR}"; KD=30
 TS=\$(date +%Y%m%d_%H%M%S); mkdir -p "\$BD"
 
-# Проверка что HA установлен и запущен хотя бы раз (создана папка конфига)
 if [ ! -d "\${HD}/homeassistant" ]; then
   echo "Ошибка: Каталог \${HD}/homeassistant не найден."
   echo "Убедитесь, что Home Assistant установлен и запущен хотя бы один раз."
@@ -3543,45 +3542,43 @@ fi
 
 EX="--exclude=*.db --exclude=*.db-shm --exclude=*.db-wal --exclude=home-assistant_v2.db* --exclude=tts --exclude=deps --exclude=__pycache__"
 
-# Создание архива
 if command -v pigz &>/dev/null; then
   tar -I pigz -cf "\${BD}/ha_config_\${TS}.tar.gz" \$EX -C "\$HD" homeassistant
 else
   tar czf "\${BD}/ha_config_\${TS}.tar.gz" \$EX -C "\$HD" homeassistant
 fi
 
-# Проверка успешности создания
 if [ \$? -ne 0 ]; then
   echo "Ошибка при создании архива!"
   exit 1
 fi
 
-# Удаление старых бэкапов
 find "\$BD" -name "ha_config_*.tar.gz" -mtime +\$KD -delete 2>/dev/null
 
-# Уведомление и вывод результата
-/usr/local/bin/ha-notify "Бэкап: \$(du -sh "\${BD}/ha_config_\${TS}.tar.gz" 2>/dev/null | awk '{print \$1}')"
+BSIZE=\$(du -sh "\${BD}/ha_config_\${TS}.tar.gz" 2>/dev/null | awk '{print \$1}')
+/usr/local/bin/ha-notify "Бэкап: \$BSIZE"
 echo "Бэкап успешно создан: \${BD}/ha_config_\${TS}.tar.gz"
 BEOF
 
-    cat > /usr/local/bin/ha-restore << 'REOF'
+    cat > /usr/local/bin/ha-restore << REOF
 #!/bin/bash
-[ -z "$BASH_VERSION" ] && { echo "Нужен bash!"; exit 1; }
+[ -z "\$BASH_VERSION" ] && { echo "Нужен bash!"; exit 1; }
 BD="${HA_BACKUP_DIR}"; HD="${HASSIO_DIR}"
-mapfile -t F < <(ls -1t "$BD"/ha_config_*.tar.gz 2>/dev/null)
-[ ${#F[@]} -eq 0 ] && { echo "Бэкапы не найдены"; exit 1; }
-for i in "${!F[@]}"; do
-  printf " %d) %s (%s)\n" "$((i+1))" "$(basename "${F[$i]}")" "$(du -sh "${F[$i]}" | awk '{print $1}')"
+mapfile -t F < <(ls -1t "\$BD"/ha_config_*.tar.gz 2>/dev/null)
+[ \${#F[@]} -eq 0 ] && { echo "Бэкапы не найдены"; exit 1; }
+for i in "\${!F[@]}"; do
+  SIZE=\$(du -sh "\${F[\$i]}" | awk '{print \$1}')
+  printf " %d) %s (%s)\n" "\$((i+1))" "\$(basename "\${F[\$i]}")" "\$SIZE"
 done
 read -p "Номер: " n
-[[ ! "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt ${#F[@]} ] && exit 1
+[[ ! "\$n" =~ ^[0-9]+\$ ]] || [ "\$n" -lt 1 ] || [ "\$n" -gt \${#F[@]} ] && exit 1
 read -p "Подтвердить? (да/yes): " c
-[ "$c" != "да" ] && [ "$c" != "yes" ] && exit 0
-echo "Проверка..."; tar tzf "${F[$((n-1))]}" >/dev/null 2>&1 || { echo "Архив повреждён!"; exit 1; }
+[ "\$c" != "да" ] && [ "\$c" != "yes" ] && exit 0
+echo "Проверка..."; tar tzf "\${F[\$((n-1))]}" >/dev/null 2>&1 || { echo "Архив повреждён!"; exit 1; }
 echo "Бэкап текущего..."; docker stop homeassistant 2>/dev/null
-ts=$(date +%Y%m%d_%H%M%S)
-tar czf "${BD}/ha_pre_restore_${ts}.tar.gz" -C "$HD" homeassistant 2>/dev/null
-echo "Восстановление..."; tar xzf "${F[$((n-1))]}" -C "$HD"
+ts=\$(date +%Y%m%d_%H%M%S)
+tar czf "\${BD}/ha_pre_restore_\${ts}.tar.gz" -C "\$HD" homeassistant 2>/dev/null
+echo "Восстановление..."; tar xzf "\${F[\$((n-1))]}" -C "\$HD"
 docker start homeassistant 2>/dev/null; echo "Готово!"
 REOF
     chmod +x /usr/local/bin/ha-backup /usr/local/bin/ha-restore
