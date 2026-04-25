@@ -439,7 +439,8 @@ import_config() {
       key="${BASH_REMATCH[1]}"
       val="${BASH_REMATCH[2]}"
       val="${val#\"}"; val="${val%\"}"
-      [[ "$val" =~ ^[a-zA-Z0-9._:/-]+$ ]] || { msg_warn "Пропуск: ${key}"; continue; }
+      # Разрешаем пустые значения и спецсимволы URL (?=&+%)
+      [[ -z "$val" ]] || [[ "$val" =~ ^[a-zA-Z0-9._:/?&=%+-]+$ ]] || { msg_warn "Пропуск: ${key}"; continue; }
       printf -v "$key" '%s' "$val"
     fi
   done < "$file"
@@ -478,7 +479,7 @@ _send_webhook() {
     *discord.com/api/webhooks/*|*discordapp.com/api/webhooks/*)
       local escaped
       escaped=$(printf '%s' "$full_msg" \
-        | sed 's/\\/\\\\/g; s/"/\\"/g')
+        | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
       curl -s -X POST "$url" \
         -H "Content-Type: application/json" \
         -d "{\"content\":\"${escaped}\"}" \
@@ -489,7 +490,7 @@ _send_webhook() {
     *hooks.slack.com/*)
       local escaped
       escaped=$(printf '%s' "$full_msg" \
-        | sed 's/\\/\\\\/g; s/"/\\"/g')
+        | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
       curl -s -X POST "$url" \
         -H "Content-Type: application/json" \
         -d "{\"text\":\"${escaped}\"}" \
@@ -500,7 +501,7 @@ _send_webhook() {
     */message*|*gotify*)
       local escaped
       escaped=$(printf '%s' "$full_msg" \
-        | sed 's/\\/\\\\/g; s/"/\\"/g')
+        | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
       curl -s -X POST "$url" \
         -H "Content-Type: application/json" \
         -d "{\"title\":\"Home Assistant\",\"message\":\"${escaped}\",\"priority\":5}" \
@@ -520,7 +521,7 @@ _send_webhook() {
       if [[ ! "$rc" =~ ^2 ]]; then
         local escaped
         escaped=$(printf '%s' "$full_msg" \
-          | sed 's/\\/\\\\/g; s/"/\\"/g')
+          | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
         curl -s -X POST "$url" \
           -H "Content-Type: application/json" \
           -d "{\"text\":\"${escaped}\",\"message\":\"${escaped}\"}" \
@@ -1246,6 +1247,8 @@ get_current_prefix() {
 os_release_needs_faking() {
   detect_system_info
   echo "$CACHED_PRETTY_NAME" | grep -qi "Debian" || return 0
+  # Если codename пуст — подмена нужна (несовместимая ОС)
+  [ -z "$CACHED_CODENAME" ] && return 0
   echo "$HA_SUPPORTED_CODENAMES" | grep -qw "$CACHED_CODENAME" || return 0
   return 1
 }
@@ -2865,10 +2868,10 @@ step_install_docker() {
     detect_system_info
     local codename="${CACHED_CODENAME}"
         # Проверить что репозиторий Docker существует для этого codename
-        if [ -n "$codename" ] && [ "$codename" != "sid" ]; then
+        if [[ "$codename" == "sid" ]]; then
             # Для sid используем trixie
-            [[ "$codename" == "sid" ]] && codename="trixie"
-        else
+            codename="trixie"
+        elif [ -z "$codename" ]; then
             # Неизвестный codename — fallback на bookworm
             codename="bookworm"
         fi
@@ -3015,7 +3018,7 @@ step_install_ha() {
 
   require_disk_space 1500 "HA" || { msg_error "Нет места для HA"; exit 1; }
   mkdir -p "$BACKUP_DIR"
-  push_rollback 'dpkg --purge homeassistant-supervised 2>/dev/null'
+  push_rollback 'restore_os_release 2>/dev/null; dpkg --purge homeassistant-supervised 2>/dev/null'
 
   if os_release_needs_faking; then
     msg_warn "Подмена os-release"
@@ -3195,18 +3198,20 @@ step_security() {
       local iok=true
       command -v iptables &>/dev/null && iptables --version 2>/dev/null | grep -q legacy && iok=false
       if $iok; then
-        cat >> /etc/ufw/after.rules << 'U'
-# BEGIN HA-INSTALLER DOCKER-USER RULES
-*filter
-:DOCKER-USER - [0:0]
--A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
--A DOCKER-USER -s 10.0.0.0/8 -j RETURN
--A DOCKER-USER -s 172.16.0.0/12 -j RETURN
--A DOCKER-USER -s 192.168.0.0/16 -j RETURN
--A DOCKER-USER -j DROP
-COMMIT
-# END HA-INSTALLER DOCKER-USER RULES
-U
+        # Вставляем правила ДО последнего COMMIT в таблице *filter.
+        # Это предотвращает создание дублирующегося блока *filter, который ломает iptables-restore.
+        sed -i '$ s/^COMMIT/\
+### BEGIN HA-INSTALLER DOCKER-USER RULES ###\
+:DOCKER-USER - [0:0]\
+-A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN\
+-A DOCKER-USER -s 10.0.0.0\/8 -j RETURN\
+-A DOCKER-USER -s 172.16.0.0\/12 -j RETURN\
+-A DOCKER-USER -s 192.168.0.0\/16 -j RETURN\
+-A DOCKER-USER -j DROP\
+### END HA-INSTALLER DOCKER-USER RULES ###\
+\
+COMMIT/' /etc/ufw/after.rules
+
         ufw reload >/dev/null 2>&1
         msg_ok "DOCKER-USER правила"
       else
@@ -3341,8 +3346,7 @@ if [ -n "$WEBHOOK" ]; then
 
     # Discord ожидает JSON с полем "content"
     *discord.com/api/webhooks/*|*discordapp.com/api/webhooks/*)
-      ESCAPED=$(printf '%s' "$FULL_MSG" \
-        | sed 's/\\/\\\\/g; s/"/\\"/g')
+      ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
       curl -s -X POST "$WEBHOOK" \
         -H "Content-Type: application/json" \
         -d "{\"content\":\"${ESCAPED}\"}" \
@@ -3351,8 +3355,7 @@ if [ -n "$WEBHOOK" ]; then
 
     # Slack ожидает JSON с полем "text"
     *hooks.slack.com/*)
-      ESCAPED=$(printf '%s' "$FULL_MSG" \
-        | sed 's/\\/\\\\/g; s/"/\\"/g')
+      ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
       curl -s -X POST "$WEBHOOK" \
         -H "Content-Type: application/json" \
         -d "{\"text\":\"${ESCAPED}\"}" \
@@ -3361,8 +3364,7 @@ if [ -n "$WEBHOOK" ]; then
 
     # Gotify ожидает JSON с полями "title" и "message"
     */message*|*gotify*)
-      ESCAPED=$(printf '%s' "$FULL_MSG" \
-        | sed 's/\\/\\\\/g; s/"/\\"/g')
+      ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
       curl -s -X POST "$WEBHOOK" \
         -H "Content-Type: application/json" \
         -d "{\"title\":\"Home Assistant\",\"message\":\"${ESCAPED}\",\"priority\":5}" \
@@ -3378,8 +3380,7 @@ if [ -n "$WEBHOOK" ]; then
         2>/dev/null) || RC="000"
       RC="${RC:-000}"
       if [[ ! "$RC" =~ ^2 ]]; then
-        ESCAPED=$(printf '%s' "$FULL_MSG" \
-          | sed 's/\\/\\\\/g; s/"/\\"/g')
+        ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
         curl -s -X POST "$WEBHOOK" \
           -H "Content-Type: application/json" \
           -d "{\"text\":\"${ESCAPED}\",\"message\":\"${ESCAPED}\"}" \
@@ -3512,24 +3513,24 @@ find "\$BD" -name "ha_config_*.tar.gz" -mtime +\$KD -delete 2>/dev/null
 /usr/local/bin/ha-notify "Бэкап: \$(du -sh "\${BD}/ha_config_\${TS}.tar.gz" 2>/dev/null | awk '{print \$1}')"
 BEOF
 
-    cat > /usr/local/bin/ha-restore << REOF
+    cat > /usr/local/bin/ha-restore << 'REOF'
 #!/bin/bash
-[ -z "\$BASH_VERSION" ] && { echo "Нужен bash!"; exit 1; }
+[ -z "$BASH_VERSION" ] && { echo "Нужен bash!"; exit 1; }
 BD="${HA_BACKUP_DIR}"; HD="${HASSIO_DIR}"
-mapfile -t F < <(ls -1t "\$BD"/ha_config_*.tar.gz 2>/dev/null)
-[ \${#F[@]} -eq 0 ] && { echo "Бэкапы не найдены"; exit 1; }
-for i in "\${!F[@]}"; do
-  printf " %d) %s (%s)\n" "\$((i+1))" "\$(basename "\${F[\$i]}")" "\$(du -sh "\${F[\$i]}" | awk '{print \$1}')"
+mapfile -t F < <(ls -1t "$BD"/ha_config_*.tar.gz 2>/dev/null)
+[ ${#F[@]} -eq 0 ] && { echo "Бэкапы не найдены"; exit 1; }
+for i in "${!F[@]}"; do
+  printf " %d) %s (%s)\n" "$((i+1))" "$(basename "${F[$i]}")" "$(du -sh "${F[$i]}" | awk '{print $1}')"
 done
 read -p "Номер: " n
-[[ ! "\$n" =~ ^[0-9]+\$ ]] || [ "\$n" -lt 1 ] || [ "\$n" -gt \${#F[@]} ] && exit 1
+[[ ! "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt ${#F[@]} ] && exit 1
 read -p "Подтвердить? (да/yes): " c
-[ "\$c" != "да" ] && [ "\$c" != "yes" ] && exit 0
-echo "Проверка..."; tar tzf "\${F[\$((n-1))]}" >/dev/null 2>&1 || { echo "Архив повреждён!"; exit 1; }
+[ "$c" != "да" ] && [ "$c" != "yes" ] && exit 0
+echo "Проверка..."; tar tzf "${F[$((n-1))]}" >/dev/null 2>&1 || { echo "Архив повреждён!"; exit 1; }
 echo "Бэкап текущего..."; docker stop homeassistant 2>/dev/null
-ts=\$(date +%Y%m%d_%H%M%S)
-tar czf "\${BD}/ha_pre_restore_\${ts}.tar.gz" -C "\$HD" homeassistant 2>/dev/null
-echo "Восстановление..."; tar xzf "\${F[\$((n-1))]}" -C "\$HD"
+ts=$(date +%Y%m%d_%H%M%S)
+tar czf "${BD}/ha_pre_restore_${ts}.tar.gz" -C "$HD" homeassistant 2>/dev/null
+echo "Восстановление..."; tar xzf "${F[$((n-1))]}" -C "$HD"
 docker start homeassistant 2>/dev/null; echo "Готово!"
 REOF
     chmod +x /usr/local/bin/ha-backup /usr/local/bin/ha-restore
@@ -3628,6 +3629,10 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
+        
+        # Увеличенные таймауты для корректной работы WebSocket (HA, ESPHome)
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
     }
 }
 NGINX
@@ -4665,10 +4670,10 @@ Docker и сеть останутся.\n\
         sysctl --system >/dev/null 2>&1 || true
         systemctl restart NetworkManager 2>/dev/null || true
 
-        # --- Очистка Docker ---
+        # --- Очистка Docker (только dangling, чтобы не удалить пользовательские образы) ---
         if command -v docker &>/dev/null; then
-            msg_action "Очистка Docker..."
-            docker system prune -af 2>/dev/null || true
+            msg_action "Очистка неиспользуемых данных Docker..."
+            docker system prune -f 2>/dev/null || true
             docker volume prune -f 2>/dev/null || true
         fi
 
