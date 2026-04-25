@@ -440,7 +440,9 @@ import_config() {
       val="${BASH_REMATCH[2]}"
       val="${val#\"}"; val="${val%\"}"
       # Разрешаем пустые значения и спецсимволы URL (?=&+%)
-      [[ -z "$val" ]] || [[ "$val" =~ ^[a-zA-Z0-9._:/?&=%+-]+$ ]] || { msg_warn "Пропуск: ${key}"; continue; }
+      # Регулярку выносим в переменную, чтобы bash не ругался на спецсимвол & внутри [[ =~ ]]
+      local url_regex='^[a-zA-Z0-9._:/?&=%+-]+$'
+      [[ -z "$val" ]] || [[ "$val" =~ $url_regex ]] || { msg_warn "Пропуск: ${key}"; continue; }
       printf -v "$key" '%s' "$val"
     fi
   done < "$file"
