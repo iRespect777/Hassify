@@ -2442,6 +2442,7 @@ step_install_deps() {
   [ "$OPT_UFW" = true ]           && pkgs+=(ufw fail2ban)
   [ "$OPT_AUTOUPDATE" = true ]    && pkgs+=(unattended-upgrades)
   [ "$OPT_BACKUP" = true ]        && pkg_available pigz && pkgs+=(pigz)
+  [ "$OPT_REMOTE_BACKUP" = true ] && pkg_available rsync && pkgs+=(rsync)
   [ "$OPT_REVERSE_PROXY" = true ] && pkgs+=(nginx certbot python3-certbot-nginx)
 
   is_armbian && systemctl is-active --quiet armbian-hardware-optimization 2>/dev/null || {
