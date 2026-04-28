@@ -2174,9 +2174,9 @@ run_wizard() {
   # Remote backup (if selected)
   if [ "$OPT_REMOTE_BACKUP" = true ]; then
     if [ "$HAS_WHIPTAIL" = true ]; then
-      REMOTE_BACKUP_TARGET=$(_whip_input "Удалённый бэкап" "Формат: ssh://user@host:/path/to/backups" "") || OPT_REMOTE_BACKUP=false
+      REMOTE_BACKUP_TARGET=$(_whip_input "Удалённый бэкап" "SSH: ssh://user@host:/path\nОблако (rclone): rclone://yandex:HA_Backups\n\nВНИМАНИЕ: Для облака потребуется ручная настройка rclone после установки!" "") || OPT_REMOTE_BACKUP=false
     else
-      REMOTE_BACKUP_TARGET=$(text_input "Удал. бэкап (ssh://user@host:/path)" "")
+      REMOTE_BACKUP_TARGET=$(text_input "Удал. бэкап (ssh://... или rclone://yandex:path)" "")
       [ -z "$REMOTE_BACKUP_TARGET" ] && OPT_REMOTE_BACKUP=false
     fi
   fi
@@ -2272,20 +2272,20 @@ show_main_menu() {
         /usr/local/bin/ha-backup
       else
         msg_error "Утилита ha-backup не найдена"
-        msg_dim "Она устанавливается автоматически при выборе опции 'Бэкапы' в мастере установки"
+        msg_dim "Сначала установите Home Assistant, выбрав пункт 'Установить HA Supervised'"
       fi
       echo ""
       read -n 1 -s -r -p "Нажмите любую клавишу для возврата в меню..."
       echo ""
       IMMEDIATE_ACTION=true
-      RUN_WIZARD=false # Важно: чтобы случайно не запустился мастер установки
+      RUN_WIZARD=false
       ;;
     restore)
       if [ -x /usr/local/bin/ha-restore ]; then
         /usr/local/bin/ha-restore
       else
         msg_error "Утилита ha-restore не найдена"
-        msg_dim "Она устанавливается автоматически при выборе опции 'Бэкапы' в мастере установки"
+        msg_dim "Сначала установите Home Assistant"
       fi
       echo ""
       read -n 1 -s -r -p "Нажмите любую клавишу для возврата в меню..."
@@ -2298,7 +2298,7 @@ show_main_menu() {
         /usr/local/bin/ha-health
       else
         msg_error "Утилита ha-health не найдена"
-        msg_dim "Установите HA, чтобы утилита создалась автоматически"
+        msg_dim "Сначала установите Home Assistant"
       fi
       echo ""
       read -n 1 -s -r -p "Нажмите любую клавишу для возврата в меню..."
@@ -3554,13 +3554,12 @@ TS=\$(date +%Y%m%d_%H%M%S); mkdir -p "\$BD"
 
 if command -v ha &>/dev/null; then
   # ==========================================
-  # МЕТОД 1: Полный снапшот через HA CLI (Надежный для Supervised)
+  # МЕТОД 1: Полный снапшот через HA CLI
   # ==========================================
   echo "Создание полного бэкапа через HA CLI..."
   
-  # ИСПРАВЛЕНО: Имя передается как позиционный аргумент, без --name.
-  # stdout >/dev/null, чтобы не засорять консоль JSON, stderr оставляем для прогресса.
-  ha backups new "AutoBackup_\${TS}" >/dev/null 2>&1
+  # Используем флаг --name. stdout прячем (чтобы не спамить JSON), stderr оставляем (там прогресс-бар).
+  ha backups new --name "AutoBackup_\${TS}" >/dev/null
   
   if [ \$? -eq 0 ]; then
     echo "Полный бэкап успешно создан средствами HA!"
@@ -3574,9 +3573,8 @@ if command -v ha &>/dev/null; then
     exit 1
   fi
 
-  # Очистка старых бэкапов (через CLI оставляем 5 последних)
+  # Очистка старых бэкапов (оставляем 5 последних)
   echo "Очистка старых снапшотов (оставляем 5 последних)..."
-  # ИСПРАВЛЕНО: Убран флаг -j. ha backups list сама выводит JSON в stdout.
   SLUGS=\$(ha backups list 2>/dev/null | jq -r '.data.backups | sort_by(.date) | .[].slug' 2>/dev/null)
   COUNT=\$(echo "\$SLUGS" | wc -l)
   KEEP=5
@@ -3591,7 +3589,7 @@ if command -v ha &>/dev/null; then
 
 else
   # ==========================================
-  # МЕТОД 2: Быстрый бэкап папки конфига (TAR) - fallback
+  # МЕТОД 2: Быстрый бэкап папки конфига (TAR)
   # ==========================================
   echo "Утилита 'ha' не найдена. Используется быстрый бэкап (только конфиг Core)."
   echo ""
@@ -3644,7 +3642,6 @@ if command -v ha &>/dev/null; then
   # ==========================================
   echo "Доступные полные бэкапы (снапшоты) Home Assistant:"
   echo "--------------------------------------------------"
-  # Выводим красивый список бэкапов средствами самого HA
   ha backups list
   echo "--------------------------------------------------"
   
@@ -3655,7 +3652,6 @@ if command -v ha &>/dev/null; then
   [ "\$c" != "да" ] && [ "\$c" != "yes" ] && exit 0
   
   echo "Восстановление... (это может занять несколько минут, HA перезапустится)"
-  # Утилита ha сама отключает контейнеры, разворачивает данные и запускает HA
   if ha backups restore "\$SLUG"; then
     echo "Восстановление успешно запущено/завершено!"
   else
@@ -3665,12 +3661,11 @@ if command -v ha &>/dev/null; then
 
 else
   # ==========================================
-  # МЕТОД 2: Восстановление TAR (только конфиг Core) - fallback
+  # МЕТОД 2: Восстановление TAR (только конфиг Core)
   # ==========================================
   echo "Утилита 'ha' не найдена. Восстановление из TAR архива (только конфиг Core)."
   BD="${HA_BACKUP_DIR}"
   
-  # Динамически определяем реальный путь к конфигурации HA через Docker
   CONFIG_DIR=\$(docker inspect homeassistant --format '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
   if [ -z "\$CONFIG_DIR" ]; then
       CONFIG_DIR="/usr/share/hassio/homeassistant"
@@ -3708,17 +3703,17 @@ REOF
 REMOTE="${REMOTE_BACKUP_TARGET}"
 BD="${HA_BACKUP_DIR}"
 
-# Определяем, какой файл бэкапить (Полный снапшот или TAR)
+# 1. Определяем, какой файл бэкапить (Полный снапшот или TAR)
+LATEST_FILE=""
 if command -v ha &>/dev/null; then
   LATEST_SLUG=\$(ha backups list 2>/dev/null | jq -r '.data.backups | sort_by(.date) | reverse | .[0].slug' 2>/dev/null)
   if [ -n "\$LATEST_SLUG" ]; then
     SNAPSHOT_DIR="/usr/share/hassio/backup"
-    LATEST_FILE="\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar"
+    [ -f "\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar" ] && LATEST_FILE="\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar"
   fi
 fi
 
-# Если HA CLI не дал результата, ищем TAR fallback
-if [ -z "\$LATEST_FILE" ] || [ ! -f "\$LATEST_FILE" ]; then
+if [ -z "\$LATEST_FILE" ]; then
   LATEST_FILE=\$(ls -1t "\$BD"/ha_config_*.tar.gz 2>/dev/null | head -1)
 fi
 
@@ -3734,11 +3729,24 @@ case "\$REMOTE" in
     # МЕТОД 1: Облачные диски через rclone
     # ==========================================
     if ! command -v rclone &>/dev/null; then
-      echo "ОШИБКА: rclone не установлен (apt install rclone)"; exit 1
+      echo "ОШИБКА: rclone не установлен"; exit 1
     fi
     # Отрезаем префикс rclone:// -> получаем remote:path
     RCLONE_TARGET="\${REMOTE#rclone://}"
+    # Извлекаем имя профиля (например, yandex из yandex:HA_Backups)
+    RCLONE_REMOTE="\${RCLONE_TARGET%%:*}"
     
+    # Проверяем, настроен ли этот профиль в rclone
+    if ! rclone listremotes 2>/dev/null | grep -q "^\${RCLONE_REMOTE}:"; then
+      echo "=========================================="
+      echo "ОШИБКА: Профиль rclone '\${RCLONE_REMOTE}' не настроен!"
+      echo "Выполните команду: sudo rclone config"
+      echo "=========================================="
+      /usr/local/bin/ha-notify "Удал. бэкап: rclone НЕ НАСТРОЕН (\$RCLONE_REMOTE)"
+      exit 1
+    fi
+    
+    # Используем copy (не sync!), чтобы не удалить старые бэкапы в облаке
     rclone copy "\$LATEST_FILE" "\$RCLONE_TARGET" --progress
     if [ \$? -eq 0 ]; then
       /usr/local/bin/ha-notify "Удал. бэкап (rclone) -> OK"
@@ -3766,6 +3774,22 @@ esac
 RBEOF
     chmod +x /usr/local/bin/ha-backup-remote
     msg_ok "Удалённый бэкап"
+  fi
+
+  # --- Гарантированная установка rclone (Fallback) ---
+  if [ "$OPT_REMOTE_BACKUP" = true ]; then
+    if ! command -v rclone &>/dev/null; then
+      msg_action "Установка rclone (официальный скрипт)..."
+      curl -fsSL https://rclone.org/install.sh 2>/dev/null | bash >/dev/null 2>&1
+      if command -v rclone &>/dev/null; then
+        msg_ok "rclone установлен"
+      else
+        msg_warn "Не удалось установить rclone автоматически."
+        msg_dim "Установите вручную: curl https://rclone.org/install.sh | sudo bash"
+      fi
+    else
+      msg_ok "rclone: $(rclone version 2>/dev/null | head -1 | awk '{print $2}')"
+    fi
   fi
 
   # --- Мониторинг Prometheus ---
@@ -5679,6 +5703,18 @@ show_final() {
   echo -e "\n   ${YELLOW}Инициализация HA занимает 10-15 минут.${NC}\n"
 
   generate_info_file
+  # Инструкция по облачному бэкапу
+  if [ "$OPT_REMOTE_BACKUP" = true ] && [[ "$REMOTE_BACKUP_TARGET" == rclone://* ]]; then
+    local rclone_remote="${REMOTE_BACKUP_TARGET#rclone://}"
+    rclone_remote="${rclone_remote%%:*}"
+    echo -e "\n   ${YELLOW}${BOLD}Важно про облачный бэкап:${NC}"
+    echo -e "   ${DIM}rclone установлен, но требуется авторизация в облаке!"
+    echo -e "   ${WHITE}1.${NC} Выполните в консоли команду: ${CYAN}sudo rclone config${NC}"
+    echo -e "   ${WHITE}2.${NC} Выберите ${CYAN}n${NC} (New remote) и назовите его: ${CYAN}${rclone_remote}${NC}"
+    echo -e "   ${WHITE}3.${NC} Выберите тип хранилища (Yandex Disk, Google Drive и т.д.)"
+    echo -e "   ${WHITE}4.${NC} Скопируйте ссылку из консоли, откройте в браузере и авторизуйтесь"
+    echo ""
+  fi
   # Инструкция по полному бэкапу
   if [ "$OPT_BACKUP" = true ] && [ -z "$OPT_HA_API_TOKEN" ]; then
     echo -e "\n   ${YELLOW}${BOLD}Важно про бэкапы:${NC}"
