@@ -84,7 +84,7 @@ CURRENT_STEP_NUM=0
 # v9.0+ options
 OPT_TIMEZONE=""; OPT_DATA_DIR=""; OPT_WIFI_SSID=""; OPT_WIFI_PASS=""
 OPT_WEBHOOK_URL=""; OPT_SWAP_SIZE=""; OPT_DOCKER_MIRROR=""
-OPT_RESTORE_BACKUP=""; OPT_HA_API_TOKEN=""; OPT_AUTO_REBOOT=false; OPT_LOCALE=""
+OPT_RESTORE_BACKUP=""; OPT_AUTO_REBOOT=false; OPT_LOCALE=""
 
 SYSTEM_INFO_LOADED=false
 CACHED_CODENAME=""; CACHED_VERSION_ID=""
@@ -356,7 +356,6 @@ OPT_SWAP_SIZE="${OPT_SWAP_SIZE}"
 OPT_DOCKER_MIRROR="${OPT_DOCKER_MIRROR}"
 OPT_AUTO_REBOOT=${OPT_AUTO_REBOOT}
 OPT_LOCALE="${OPT_LOCALE}"
-OPT_HA_API_TOKEN="${OPT_HA_API_TOKEN}"
 PROFILE="${PROFILE}"
 EOF
   chmod 600 "$HA_CONFIG_FILE"
@@ -377,7 +376,7 @@ load_config() {
         OS_RELEASE_FAKED|OPT_ZRAM|OPT_UFW|OPT_WATCHDOG|\
         OPT_THERMAL|OPT_BACKUP|OPT_HACS|OPT_MONITORING|PROFILE|\
         OPT_DATA_DIR|OPT_TIMEZONE|OPT_WEBHOOK_URL|OPT_SWAP_SIZE|\
-        OPT_DOCKER_MIRROR|OPT_AUTO_REBOOT|OPT_LOCALE|OPT_HA_API_TOKEN)
+        OPT_DOCKER_MIRROR|OPT_AUTO_REBOOT|OPT_LOCALE)
           printf -v "$key" '%s' "$val"
           ;;
       esac
@@ -3332,15 +3331,9 @@ step_extras() {
   printf '%s' "${TG_CHAT}"         > "${secrets_dir}/tg_chat"
   printf '%s' "${OPT_WEBHOOK_URL}" > "${secrets_dir}/webhook_url"
   
-  # Сохраняем API токен только если он введен (не создаем пустой файл)
-  if [ -n "${OPT_HA_API_TOKEN}" ]; then
-    printf '%s' "${OPT_HA_API_TOKEN}" > "${secrets_dir}/ha_api_token"
-  fi
-  
   chmod 600 "${secrets_dir}/tg_token" \
             "${secrets_dir}/tg_chat" \
-            "${secrets_dir}/webhook_url" \
-            "${secrets_dir}/ha_api_token" 2>/dev/null
+            "${secrets_dir}/webhook_url" 2>/dev/null
 
   # Heredoc с кавычками << 'NTEOF' означает что bash НЕ делает
   # никаких подстановок внутри — всё записывается буквально.
@@ -5525,7 +5518,6 @@ HA Установщик v${SCRIPT_VERSION}
     --machine ТИП                       Тип машины HA
     --os-agent-ver X                    Версия OS-Agent
     --ha-ver X                          Версия HA
-    --ha-api-token ТОКЕН               Токен долгосрочного доступа HA для полных бэкапов
 
   ФАЙЛЫ:
     ${HA_INSTALLER_DIR}/                Конфигурация и состояние
@@ -5594,8 +5586,6 @@ parse_args() {
       --os-agent-ver=*)     OVERRIDE_OS_AGENT_VER="${1#*=}";;
       --ha-ver)             shift; [ $# -eq 0 ] && { msg_error "--ha-ver ?"; exit 1; }; OVERRIDE_HA_VER="$1";;
       --ha-ver=*)           OVERRIDE_HA_VER="${1#*=}";;
-      --ha-api-token)      shift; [ $# -eq 0 ] && { msg_error "--ha-api-token ?"; exit 1; }; OPT_HA_API_TOKEN="$1";;
-      --ha-api-token=*)    OPT_HA_API_TOKEN="${1#*=}";;
       *)                    msg_error "Неизвестная опция: $1"; show_help; exit 1;;
     esac
     shift
@@ -5715,16 +5705,18 @@ show_final() {
     echo -e "   ${WHITE}4.${NC} Скопируйте ссылку из консоли, откройте в браузере и авторизуйтесь"
     echo ""
   fi
-  # Инструкция по полному бэкапу
-  if [ "$OPT_BACKUP" = true ] && [ -z "$OPT_HA_API_TOKEN" ]; then
-    echo -e "\n   ${YELLOW}${BOLD}Важно про бэкапы:${NC}"
-    echo -e "   ${DIM}Сейчас настроен быстрый бэкап (только файлы конфигурации Core)."
-    echo -e "   ${DIM}Он НЕ сохраняет аддоны (Zigbee2MQTT, Node-RED) и базы данных."
-    echo -e "   ${DIM}Чтобы включить ПОЛНЫЙ бэкап через API:${NC}"
-    echo -e "   ${WHITE}1.${NC} Откройте HA -> Настройки профиля -> Безопасность -> Токены доступа"
-    echo -e "   ${WHITE}2.${NC} Создайте Long-Lived Access Token и скопируйте его"
-    echo -e "   ${WHITE}3.${NC} Выполните в консоли команду:"
-    echo -e "   ${CYAN}echo 'Ваш_Токен' | sudo tee /var/lib/ha-installer/secrets/ha_api_token${NC}"
+  # Инструкция по системе бэкапов
+  if [ "$OPT_BACKUP" = true ]; then
+    if command -v ha &>/dev/null; then
+      echo -e "\n   ${GREEN}${BOLD}Бэкапы настроены!${NC}"
+      echo -e "   ${DIM}Используется нативная утилита HA CLI. Создаются ПОЛНЫЕ снапшоты"
+      echo -e "   ${DIM}(со всеми аддонами, Zigbee2MQTT и базами данных)."
+      echo -e "   ${DIM}Никаких ручных настроек и токенов не требуется!${NC}"
+    else
+      echo -e "\n   ${YELLOW}${BOLD}Важно про бэкапы:${NC}"
+      echo -e "   ${DIM}Утилита 'ha' не найдена. Активирован быстрый бэкап (только конфиг Core)."
+      echo -e "   ${DIM}Он НЕ сохраняет аддоны (Zigbee2MQTT, ESPHome) и базы данных."
+    fi
     echo ""
   fi
   send_notification "HA установлен: http://${ip}:8123"
