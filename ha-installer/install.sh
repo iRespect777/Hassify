@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 9.9.1
+# Version: 9.9.2
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -16,7 +16,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="9.9.1"
+readonly SCRIPT_VERSION="9.9.2"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -1575,19 +1575,29 @@ setup_wifi() {
 
   msg_action "WiFi: ${OPT_WIFI_SSID}..."
   
-  # nmcli dev wifi connect часто возвращает код ошибки, даже если соединение 
-  # успешно активировалось в фоне (особенно при медленном DHCP на TV-боксах).
-  # Поэтому мы подавляем вывод и проверяем результат через пару секунд.
+  # Запрашиваем подключение (подавляем вывод и ошибки)
   nmcli dev wifi connect "$OPT_WIFI_SSID" password "$OPT_WIFI_PASS" >/dev/null 2>&1 || true
   
-  # Даём NetworkManager 3 секунды на поднятие интерфейса и получение IP
-  sleep 3
-  
-  # Проверяем, появилось ли соединение с таким именем в списке активных
-  if nmcli -t -f NAME con show --active 2>/dev/null | grep -qF "$OPT_WIFI_SSID"; then
-    msg_ok "WiFi подключён"
+  # Находим имя WiFi интерфейса (например, wlan0)
+  local wifi_dev
+  wifi_dev=$(nmcli -t -f DEVICE,TYPE dev status 2>/dev/null | grep ':wifi$' | head -1 | cut -d: -f1)
+
+  if [ -z "$wifi_dev" ]; then
+    msg_warn "WiFi адаптер не найден в системе"
+    return 0
+  fi
+
+  # Даем время на ассоциацию и получение IP (увеличено до 5 сек для медленных адаптеров)
+  sleep 5
+
+  # Проверяем состояние конкретного WiFi интерфейса
+  local wifi_state
+  wifi_state=$(nmcli -t -f DEVICE,STATE dev status 2>/dev/null | grep "^${wifi_dev}:" | head -1 | cut -d: -f2)
+
+  if [ "$wifi_state" = "connected" ]; then
+    msg_ok "WiFi подключён (${wifi_dev})"
   else
-    msg_warn "WiFi не удалось подключить"
+    msg_warn "WiFi не удалось подключить (статус: ${wifi_state:-нет ответа})"
   fi
 }
 
