@@ -1575,7 +1575,7 @@ setup_wifi() {
 
   msg_action "WiFi: ${OPT_WIFI_SSID}..."
   
-  # Запрашиваем подключение (подавляем вывод и ошибки)
+  # Запрашиваем подключение
   nmcli dev wifi connect "$OPT_WIFI_SSID" password "$OPT_WIFI_PASS" >/dev/null 2>&1 || true
   
   # Находим имя WiFi интерфейса (например, wlan0)
@@ -1587,18 +1587,35 @@ setup_wifi() {
     return 0
   fi
 
-  # Даем время на ассоциацию и получение IP (увеличено до 5 сек для медленных адаптеров)
-  sleep 5
+  # Цикл ожидания: проверяем статус каждые 2 секунды, максимум 15 секунд.
+  # NetworkManager на TV-боксах часто подключает WiFi асинхронно (в фоне),
+  # поэтому нам нужно подождать, пока статус сменится с disconnected на connected.
+  local wait_time=0
+  local max_wait=15
+  local wifi_state=""
 
-  # Проверяем состояние конкретного WiFi интерфейса
-  local wifi_state
-  wifi_state=$(nmcli -t -f DEVICE,STATE dev status 2>/dev/null | grep "^${wifi_dev}:" | head -1 | cut -d: -f2)
+  while [ $wait_time -lt $max_wait ]; do
+    wifi_state=$(nmcli -t -f DEVICE,STATE dev status 2>/dev/null | grep "^${wifi_dev}:" | head -1 | cut -d: -f2)
+    
+    if [ "$wifi_state" = "connected" ]; then
+      msg_ok "WiFi подключён (${wifi_dev})"
+      return 0
+    fi
+    
+    # Если NM сказал "подключаюсь", просто ждём дальше
+    if [ "$wifi_state" = "connecting" ]; then
+      : # пустая операция (noop), просто ждём
+    elif [ "$wifi_state" = "disconnected" ] && [ $wait_time -eq 0 ]; then
+      # Если отключен в первую секунду — это нормально, только начал подключаться
+      : 
+    fi
+    
+    sleep 2
+    wait_time=$((wait_time + 2))
+  done
 
-  if [ "$wifi_state" = "connected" ]; then
-    msg_ok "WiFi подключён (${wifi_dev})"
-  else
-    msg_warn "WiFi не удалось подключить (статус: ${wifi_state:-нет ответа})"
-  fi
+  # Если вышли по таймауту
+  msg_warn "WiFi не удалось подключить за ${max_wait}с (статус: ${wifi_state:-нет ответа})"
 }
 
 setup_swap() {
