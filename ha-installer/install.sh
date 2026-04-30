@@ -61,12 +61,12 @@ OPT_ZRAM=true;         OPT_EMMC_TUNING=true;   OPT_USB_POWER=true
 OPT_UFW=true;          OPT_SSH_HARDENING=true;  OPT_AUTOUPDATE=true
 OPT_WATCHDOG=true;     OPT_THERMAL=true;        OPT_BACKUP=true
 OPT_HACS=true;         OPT_HOSTNAME=true;       OPT_STATIC_IP=false
-OPT_TELEGRAM=false;    OPT_REVERSE_PROXY=false;  OPT_MONITORING=false
+OPT_TELEGRAM=false;    OPT_TAILSCALE=false;  OPT_MONITORING=false
 OPT_REMOTE_BACKUP=false; OPT_BOOT_RECOVERY=true; OPT_USB_DETECT=true
 
 STATIC_IP=""; STATIC_GW=""; STATIC_DNS=""
 TG_TOKEN=""; TG_CHAT=""
-PROXY_DOMAIN=""; REMOTE_BACKUP_TARGET=""
+TS_AUTHKEY=""; REMOTE_BACKUP_TARGET=""
 SKIP_UPDATE=false; CHECK_ONLY=false; UNINSTALL=false
 DRY_RUN=false; SILENT=false; SHOW_STATUS=false
 DO_UPDATE=false; DO_SELF_TEST=false; DO_SELF_UPDATE=false
@@ -2240,13 +2240,18 @@ run_wizard() {
     fi
   fi
 
-  # Reverse proxy (if selected)
-  if [ "$OPT_REVERSE_PROXY" = true ]; then
+  # Tailscale VPN (удаленный доступ без открытых портов)
+  if [ "$OPT_TAILSCALE" = true ]; then
     if [ "$HAS_WHIPTAIL" = true ]; then
-      PROXY_DOMAIN=$(_whip_input "Обратный прокси" "Доменное имя\n(DNS должен указывать на это устройство)" "") || OPT_REVERSE_PROXY=false
+      if whiptail --title "Tailscale VPN" --yesno "Tailscale обеспечивает безопасный удаленный доступ без открытия портов.\n\nУстановить Tailscale на этот бокс?\n\n(Авторизацию нужно будет пройти вручную)" 12 65 --defaultno 2>/dev/null; then
+        TS_AUTHKEY=$(_whip_input "Auth Key (необязательно)" "Если у вас есть Tailscale Auth Key,\nвставьте его для автоматической авторизации.\nИначе оставьте пустым." "") || TS_AUTHKEY=""
+      else
+        OPT_TAILSCALE=false
+      fi
     else
-      PROXY_DOMAIN=$(text_input "Домен для прокси" "")
-      [ -z "$PROXY_DOMAIN" ] && OPT_REVERSE_PROXY=false
+      text_yesno "Установить Tailscale VPN для удаленного доступа?" "n" && {
+        TS_AUTHKEY=$(text_input "Tailscale Auth Key (оставьте пустым для ручной авторизации)" "")
+      }
     fi
   fi
 
@@ -2522,7 +2527,6 @@ step_install_deps() {
   [ "$OPT_BACKUP" = true ]        && pkg_available pigz && pkgs+=(pigz)
   [ "$OPT_REMOTE_BACKUP" = true ] && pkg_available rsync && pkgs+=(rsync)
   [ "$OPT_REMOTE_BACKUP" = true ] && pkg_available rclone && pkgs+=(rclone)
-  [ "$OPT_REVERSE_PROXY" = true ] && pkgs+=(nginx certbot python3-certbot-nginx)
 
   is_armbian && systemctl is-active --quiet armbian-hardware-optimization 2>/dev/null || {
     for p in linux-cpupower cpufrequtils; do pkg_available "$p" && pkgs+=("$p"); done
@@ -3942,34 +3946,67 @@ UNIT
     msg_ok "Восстановление загрузки"
   fi
 
-  # --- Обратный прокси ---
-  if [ "$OPT_REVERSE_PROXY" = true ] && [ -n "$PROXY_DOMAIN" ]; then
-    cat > /etc/nginx/sites-available/homeassistant << NGINX
-server {
-    server_name ${PROXY_DOMAIN};
-    location / {
-        proxy_pass http://127.0.0.1:8123;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+  # --- Tailscale VPN ---
+  if [ "$OPT_TAILSCALE" = true ]; then
+    msg_action "Настройка Tailscale VPN..."
+    
+    # Сохраняем Auth Key в secrets (если предоставлен)
+    if [ -n "${TS_AUTHKEY}" ]; then
+      printf '%s' "${TS_AUTHKEY}" > "${secrets_dir}/ts_authkey"
+      chmod 600 "${secrets_dir}/ts_authkey"
+    fi
+
+    # Устанавливаем Tailscale через официальный скрипт
+    if ! command -v tailscale &>/dev/null; then
+      msg_dim "Загрузка официального установщика Tailscale..."
+      if curl -fsSL https://tailscale.com/install.sh 2>/dev/null | sh >/dev/null 2>&1; then
+        msg_ok "Tailscale установлен"
+      else
+        msg_warn "Не удалось установить Tailscale"
+      fi
+    else
+      msg_ok "Tailscale уже установлен"
+    fi
+
+    # Запускаем службу
+    if command -v tailscaled &>/dev/null; then
+      systemctl enable tailscaled >/dev/null 2>&1 || true
+      systemctl start tailscaled >/dev/null 2>&1 || true
+      sleep 2
+
+      # Настройка UFW для Tailscale
+      if [ "$OPT_UFW" = true ]; then
+        # 1. Разрешаем ВХОДЯЩИЙ трафик на VPN-интерфейсе.
+        # Исходящие ответы разрешаются автоматически (UFW stateful).
+        # Мы доверяем всей сети Tailscale, поэтому открываем все порты на этом интерфейсе.
+        ufw allow in on tailscale0 comment "Tailscale VPN" >/dev/null 2>&1
         
-        # Увеличенные таймауты для корректной работы WebSocket (HA, ESPHome)
-        proxy_read_timeout 86400;
-        proxy_send_timeout 86400;
-    }
-}
-NGINX
-    ln -sf /etc/nginx/sites-available/homeassistant /etc/nginx/sites-enabled/ 2>/dev/null
-    rm -f /etc/nginx/sites-enabled/default 2>/dev/null
-    nginx -t 2>/dev/null && systemctl restart nginx 2>/dev/null && msg_ok "Nginx -> ${PROXY_DOMAIN}"
-    certbot --nginx -d "$PROXY_DOMAIN" --non-interactive --agree-tos \
-      --register-unsafely-without-email --redirect 2>/dev/null \
-      && msg_ok "SSL: ${PROXY_DOMAIN}" \
-      || msg_warn "SSL не удалось (позже: certbot --nginx -d ${PROXY_DOMAIN})"
+        # 2. Открываем UDP порт 41641 на основном интерфейсе.
+        # Это критически важно для установки прямых P2P соединений (WireGuard).
+        # Без этого правила устройства будут общаться через relay-серверы (DERP),
+        # что добавляет задержку, недопустимую для умного дома (Алиса, камеры).
+        ufw allow 41641/udp comment "Tailscale WireGuard" >/dev/null 2>&1
+        
+        msg_dim "UFW: трафик Tailscale разрешен"
+      fi
+
+      # Авторизация
+      local ts_key="${TS_AUTHKEY}"
+      if [ -z "$ts_key" ] && [ -f "${HA_INSTALLER_DIR}/secrets/ts_authkey" ]; then
+        ts_key=$(cat "${HA_INSTALLER_DIR}/secrets/ts_authkey" | tr -d '[:space:]')
+      fi
+
+      if [ -n "$ts_key" ]; then
+        msg_dim "Авторизация через Auth Key..."
+        # --accept-routes позволяет использовать подсети из админки Tailscale
+        if tailscale up --authkey="$ts_key" --accept-routes >/dev/null 2>&1; then
+          msg_ok "Tailscale авторизован через Auth Key"
+        else
+          msg_warn "Ошибка авторизации (ключ истек или неверный)"
+        fi
+      fi
+      # Без Auth Key НЕ запускаем `tailscale up` — заблокирует скрипт ожидая браузер.
+    fi
   fi
 
   detect_usb_dongles
