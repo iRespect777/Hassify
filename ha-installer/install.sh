@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 9.9.4
+# Version: 9.9.5
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -16,7 +16,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="9.9.4"
+readonly SCRIPT_VERSION="9.9.5"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -377,7 +377,7 @@ load_config() {
         OS_RELEASE_FAKED|OPT_ZRAM|OPT_UFW|OPT_WATCHDOG|\
         OPT_THERMAL|OPT_BACKUP|OPT_HACS|OPT_MONITORING|PROFILE|\
         OPT_DATA_DIR|OPT_TIMEZONE|OPT_WEBHOOK_URL|OPT_SWAP_SIZE|\
-        OPT_DOCKER_MIRROR|OPT_AUTO_REBOOT|OPT_LOCALE)
+        OPT_DOCKER_MIRROR|OPT_AUTO_REBOOT|OPT_LOCALE|OPT_TAILSCALE)
           printf -v "$key" '%s' "$val"
           ;;
       esac
@@ -3328,9 +3328,6 @@ step_security() {
       local port="${r%% *}"
       ufw status 2>/dev/null | grep -q "$port" || ufw allow "$port" comment "${r#* }" >/dev/null 2>&1
     done
-    [ "$OPT_REVERSE_PROXY" = true ] && {
-      ufw status 2>/dev/null | grep -q "443/tcp" || ufw allow 443/tcp comment "HTTPS" >/dev/null 2>&1
-    }
     ufw --force enable >/dev/null 2>&1
     msg_ok "UFW"
 
@@ -4893,10 +4890,11 @@ Docker и сеть останутся.\n\
         ufw reload 2>/dev/null || true
     fi
 
-    # --- Nginx ---
-    if [ -f /etc/nginx/sites-enabled/homeassistant ]; then
-        rm -f /etc/nginx/sites-enabled/homeassistant /etc/nginx/sites-available/homeassistant
-        systemctl reload nginx 2>/dev/null || true
+    # Удаление Tailscale
+    if command -v tailscale &>/dev/null; then
+        tailscale down >/dev/null 2>&1 || true
+        apt-get purge -y tailscale >/dev/null 2>&1 || true
+        rm -f /etc/apt/sources.list.d/tailscale.list
     fi
 
     # --- Avahi ---
@@ -5656,6 +5654,8 @@ HA Установщик v${SCRIPT_VERSION}
     --machine ТИП                       Тип машины HA
     --os-agent-ver X                    Версия OS-Agent
     --ha-ver X                          Версия HA
+    --tailscale                 Установить Tailscale VPN для удаленного доступа
+    --ts-authkey КЛЮЧ           Tailscale Auth Key для автоматической авторизации
 
   ФАЙЛЫ:
     ${HA_INSTALLER_DIR}/                Конфигурация и состояние
@@ -5724,6 +5724,9 @@ parse_args() {
       --os-agent-ver=*)     OVERRIDE_OS_AGENT_VER="${1#*=}";;
       --ha-ver)             shift; [ $# -eq 0 ] && { msg_error "--ha-ver ?"; exit 1; }; OVERRIDE_HA_VER="$1";;
       --ha-ver=*)           OVERRIDE_HA_VER="${1#*=}";;
+      --tailscale)           OPT_TAILSCALE=true;;
+      --ts-authkey)          shift; [ $# -eq 0 ] && { msg_error "--ts-authkey ?"; exit 1; }; TS_AUTHKEY="$1";;
+      --ts-authkey=*)        TS_AUTHKEY="${1#*=}";;
       *)                    msg_error "Неизвестная опция: $1"; show_help; exit 1;;
     esac
     shift
@@ -5805,7 +5808,7 @@ show_final() {
   [ "$OPT_HACS" = true ]          && echo -e "   ${CHECK} HACS"
   [ "$OPT_MONITORING" = true ]    && echo -e "   ${CHECK} Мониторинг"
   [ "$OPT_BOOT_RECOVERY" = true ] && echo -e "   ${CHECK} Восст. загрузки"
-  [ "$OPT_REVERSE_PROXY" = true ] && echo -e "   ${CHECK} Прокси: ${PROXY_DOMAIN}"
+  [ "$OPT_TAILSCALE" = true ] && echo -e "   ${CHECK} Tailscale VPN"
   [ -n "$OPT_RESTORE_BACKUP" ]    && echo -e "   ${CHECK} Восстановлено: $(basename "$OPT_RESTORE_BACKUP")"
   [ "$OS_RELEASE_FAKED" = true ]   && echo -e "   ${WARN} os-release подменяется при старте supervisor"
 
@@ -5831,6 +5834,23 @@ show_final() {
   echo -e "\n   ${YELLOW}Инициализация HA занимает 10-15 минут.${NC}\n"
 
   generate_info_file
+  # Инструкция по Tailscale
+  if [ "$OPT_TAILSCALE" = true ]; then
+    local ts_ip
+    ts_ip=$(tailscale ip -4 2>/dev/null || echo "")
+    if [ -n "$ts_ip" ]; then
+      echo -e "\n   ${GREEN}${BOLD}Tailscale VPN подключен!${NC}"
+      echo -e "   IP в VPN: ${CYAN}${ts_ip}${NC}"
+      echo -e "   Доступ: ${CYAN}http://${ts_ip}:8123${NC}"
+    else
+      echo -e "\n   ${YELLOW}${BOLD}Важно про Tailscale VPN:${NC}"
+      echo -e "   ${DIM}Tailscale установлен, но требует авторизации!"
+      echo -e "   ${WHITE}1.${NC} На телефоне/ПК установите приложение Tailscale и войдите в аккаунт"
+      echo -e "   ${WHITE}2.${NC} На TV-боксе выполните команду: ${CYAN}sudo tailscale up${NC}"
+      echo -e "   ${WHITE}3.${NC} В терминале появится ссылка — откройте её в браузере"
+    fi
+    echo ""
+  fi
   # Инструкция по облачному бэкапу
   if [ "$OPT_REMOTE_BACKUP" = true ] && [[ "$REMOTE_BACKUP_TARGET" == rclone://* ]]; then
     local rclone_remote="${REMOTE_BACKUP_TARGET#rclone://}"
