@@ -112,11 +112,11 @@ readonly ALL_STEPS=(preflight update deps network apparmor perf docker versions 
 readonly TOTAL_STEPS=${#ALL_STEPS[@]}
 
 declare -A PROFILES=(
-  [minimal]="OPT_ZRAM=true OPT_EMMC_TUNING=false OPT_USB_POWER=false OPT_UFW=false OPT_SSH_HARDENING=false OPT_AUTOUPDATE=false OPT_WATCHDOG=false OPT_THERMAL=false OPT_BACKUP=false OPT_HACS=false OPT_HOSTNAME=true OPT_MONITORING=false OPT_REVERSE_PROXY=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=false OPT_USB_DETECT=false"
-  [standard]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_MONITORING=false OPT_REVERSE_PROXY=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
-  [full]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_MONITORING=true OPT_REVERSE_PROXY=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
-  [server]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_STATIC_IP=true OPT_MONITORING=true OPT_REVERSE_PROXY=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
-  [dev]="OPT_ZRAM=false OPT_EMMC_TUNING=false OPT_USB_POWER=false OPT_UFW=false OPT_SSH_HARDENING=false OPT_AUTOUPDATE=false OPT_WATCHDOG=false OPT_THERMAL=false OPT_BACKUP=false OPT_HACS=true OPT_HOSTNAME=false OPT_MONITORING=false OPT_REVERSE_PROXY=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=false OPT_USB_DETECT=false"
+  [minimal]="OPT_ZRAM=true OPT_EMMC_TUNING=false OPT_USB_POWER=false OPT_UFW=false OPT_SSH_HARDENING=false OPT_AUTOUPDATE=false OPT_WATCHDOG=false OPT_THERMAL=false OPT_BACKUP=false OPT_HACS=false OPT_HOSTNAME=true OPT_MONITORING=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=false OPT_USB_DETECT=false"
+  [standard]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_MONITORING=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
+  [full]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_MONITORING=true OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
+  [server]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_STATIC_IP=true OPT_MONITORING=true OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
+  [dev]="OPT_ZRAM=false OPT_EMMC_TUNING=false OPT_USB_POWER=false OPT_UFW=false OPT_SSH_HARDENING=false OPT_AUTOUPDATE=false OPT_WATCHDOG=false OPT_THERMAL=false OPT_BACKUP=false OPT_HACS=true OPT_HOSTNAME=false OPT_MONITORING=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=false OPT_USB_DETECT=false"
 )
 
 # ============================================================================
@@ -415,7 +415,7 @@ export_config() {
     for opt in OPT_ZRAM OPT_EMMC_TUNING OPT_USB_POWER OPT_UFW OPT_SSH_HARDENING \
       OPT_AUTOUPDATE OPT_WATCHDOG OPT_THERMAL OPT_BACKUP OPT_HACS OPT_HOSTNAME \
       OPT_MONITORING OPT_BOOT_RECOVERY OPT_USB_DETECT OPT_STATIC_IP OPT_TELEGRAM \
-      OPT_REVERSE_PROXY OPT_REMOTE_BACKUP; do
+      OPT_REMOTE_BACKUP; do
       echo "${opt}=${!opt}"
     done
     echo "PROFILE=\"${PROFILE}\""
@@ -436,7 +436,7 @@ import_config() {
   while IFS= read -r line || [ -n "$line" ]; do
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-        if [[ "$line" =~ ^(OPT_[A-Z_]+|PROFILE|HA_MACHINE|STATIC_IP|STATIC_GW|STATIC_DNS|TG_TOKEN|TG_CHAT|PROXY_DOMAIN|REMOTE_BACKUP_TARGET)=(.*) ]]; then
+        if [[ "$line" =~ ^(OPT_[A-Z_]+|PROFILE|HA_MACHINE|STATIC_IP|STATIC_GW|STATIC_DNS|TG_TOKEN|TG_CHAT|REMOTE_BACKUP_TARGET)=(.*) ]]; then
       key="${BASH_REMATCH[1]}"
       val="${BASH_REMATCH[2]}"
       val="${val#\"}"; val="${val%\"}"
@@ -1842,14 +1842,13 @@ _wizard_select_components() {
       "HACS" "HACS" ON "HOSTNAME" "Имя хоста" ON "MONITOR" "Мониторинг" OFF \
       "USBDETECT" "Поиск USB" ON "BOOTRECOV" "Восст. загрузки" ON \
       "STATICIP" "Стат. IP" OFF "TELEGRAM" "Telegram" OFF \
-      "REVPROXY" "Обр. прокси" OFF "RBACKUP" "Удал. бэкап" OFF \
       3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return 1
 
     OPT_ZRAM=false; OPT_EMMC_TUNING=false; OPT_USB_POWER=false; OPT_UFW=false
     OPT_SSH_HARDENING=false; OPT_AUTOUPDATE=false; OPT_WATCHDOG=false; OPT_THERMAL=false
     OPT_BACKUP=false; OPT_HACS=false; OPT_HOSTNAME=false; OPT_STATIC_IP=false
-    OPT_TELEGRAM=false; OPT_MONITORING=false; OPT_REVERSE_PROXY=false
+    OPT_TELEGRAM=false; OPT_MONITORING=false
     OPT_REMOTE_BACKUP=false; OPT_BOOT_RECOVERY=false; OPT_USB_DETECT=false
 
     [[ $ch == *ZRAM* ]]      && OPT_ZRAM=true
@@ -1866,7 +1865,6 @@ _wizard_select_components() {
     [[ $ch == *STATICIP* ]]  && OPT_STATIC_IP=true
     [[ $ch == *TELEGRAM* ]]  && OPT_TELEGRAM=true
     [[ $ch == *MONITOR* ]]   && OPT_MONITORING=true
-    [[ $ch == *REVPROXY* ]]  && OPT_REVERSE_PROXY=true
     [[ $ch == *RBACKUP* ]]   && OPT_REMOTE_BACKUP=true
     [[ $ch == *BOOTRECOV* ]] && OPT_BOOT_RECOVERY=true
     [[ $ch == *USBDETECT* ]] && OPT_USB_DETECT=true
@@ -1883,7 +1881,6 @@ _wizard_select_components() {
     text_yesno "Мониторинг" "n"        && OPT_MONITORING=true   || OPT_MONITORING=false
     text_yesno "Стат. IP" "n"          && OPT_STATIC_IP=true    || OPT_STATIC_IP=false
     text_yesno "Telegram" "n"          && OPT_TELEGRAM=true     || OPT_TELEGRAM=false
-    text_yesno "Обр. прокси" "n"       && OPT_REVERSE_PROXY=true || OPT_REVERSE_PROXY=false
     text_yesno "Удал. бэкап" "n"       && OPT_REMOTE_BACKUP=true || OPT_REMOTE_BACKUP=false
   fi
   PROFILE="custom"
@@ -1948,7 +1945,7 @@ run_wizard() {
   OPT_AUTO_REBOOT=false
   TG_TOKEN=""; TG_CHAT=""
   STATIC_IP=""; STATIC_GW=""; STATIC_DNS=""
-  PROXY_DOMAIN=""; REMOTE_BACKUP_TARGET=""
+  REMOTE_BACKUP_TARGET=""
 
   # =============================================
   # STEP 1: MODE (quick or advanced)
