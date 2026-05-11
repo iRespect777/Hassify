@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 9.9.5
+# Version: 9.9.7
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -16,7 +16,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="9.9.5"
+readonly SCRIPT_VERSION="9.9.7"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -1608,6 +1608,12 @@ setup_wifi() {
     nmcli con modify "$wifi_uuid" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$OPT_WIFI_PASS" >/dev/null 2>&1
   fi
 
+  # Отключение энергосбережения Wi-Fi для стабильности VPN (Tailscale)
+  # Значение 2 = Power Save OFF. Предотвращает отвал интернета через пару минут.
+  if [ -n "$wifi_uuid" ]; then
+    nmcli con modify "$wifi_uuid" 802-11-wireless.powersave 2 >/dev/null 2>&1 || true
+  fi
+
   # 4. Поднимаем соединение
   local connect_output
   connect_output=$(nmcli con up "$OPT_WIFI_SSID" ifname "$wifi_dev" 2>&1)
@@ -2762,27 +2768,30 @@ step_configure_network() {
 
   if [ "$OPT_STATIC_IP" = true ] && [ -n "$STATIC_IP" ]; then
     sleep 3
-    local target_con=""
-
-    # Если мы настраивали WiFi, статический IP нужно применить именно к WiFi-профилю.
-    # Ищем активное соединение, имя которого совпадает с SSID.
-    # Это безопаснее, чем парсить тип соединения, так как SSID может содержать двоеточия.
-    if [ -n "$OPT_WIFI_SSID" ]; then
-      target_con=$(nmcli -t -f NAME con show --active 2>/dev/null | grep -F "$OPT_WIFI_SSID" | head -1)
+    # Получаем UUID активного подключения для назначения статического IP.
+    # Сначала определяем интерфейс по умолчанию, затем получаем его UUID напрямую.
+    # UUID надежнее имени, так как имена могут дублироваться или содержать спецсимволы.
+    local active_iface
+    active_iface=$(ip route list default 2>/dev/null | awk '{print $5}' | head -1)
+    local target_uuid=""
+    
+    if [ -n "$active_iface" ]; then
+      target_uuid=$(nmcli -g GENERAL.CON-UUID dev show "$active_iface" 2>/dev/null)
     fi
 
-    # Если WiFi-профиль не найден (или WiFi не просили), применяем к первому активному (обычно Ethernet)
-    if [ -z "$target_con" ]; then
-      target_con=$(nmcli -t -f NAME con show --active 2>/dev/null | head -1)
-    fi
-
-    [ -n "$target_con" ] && {
+    if [ -n "$target_uuid" ]; then
       local pf; pf=$(get_current_prefix); [ -z "$pf" ] && pf="24"
-      nmcli con mod "$target_con" ipv4.addresses "${STATIC_IP}/${pf}" \
+      nmcli con mod "$target_uuid" ipv4.addresses "${STATIC_IP}/${pf}" \
         ipv4.gateway "$STATIC_GW" ipv4.dns "$STATIC_DNS" ipv4.method manual 2>/dev/null
-      nmcli con up "$target_con" 2>/dev/null
-      msg_ok "Стат. IP: ${STATIC_IP}/${pf} (${target_con})"
-    }
+      nmcli con up "$target_uuid" 2>/dev/null
+      
+      # Получим имя подключения для красивого вывода в лог
+      local target_con_name
+      target_con_name=$(nmcli -g NAME con show "$target_uuid" 2>/dev/null)
+      msg_ok "Стат. IP: ${STATIC_IP}/${pf} (${target_con_name:-$target_uuid})"
+    else
+      msg_warn "Не удалось применить статический IP: активное подключение не найдено"
+    fi
   fi
 
   local r=0 ni=""
@@ -2803,6 +2812,19 @@ step_configure_network() {
       msg_dim "  sudo systemctl stop NetworkManager"
       msg_dim "  sudo systemctl restart networking"
       return 1
+    fi
+  fi
+
+  # Отключение энергосбережения Wi-Fi для стабильности VPN (Tailscale)
+  # Срабатывает даже если Wi-Fi был настроен ранее, а не через визард скрипта
+  local wifi_dev_power
+  wifi_dev_power=$(nmcli -t -f DEVICE,TYPE dev status 2>/dev/null | grep ':wifi$' | head -1 | cut -d: -f1)
+  if [ -n "$wifi_dev_power" ]; then
+    local wifi_uuid_power
+    wifi_uuid_power=$(nmcli -g GENERAL.CON-UUID dev show "$wifi_dev_power" 2>/dev/null)
+    if [ -n "$wifi_uuid_power" ]; then
+      nmcli con modify "$wifi_uuid_power" 802-11-wireless.powersave 2 2>/dev/null || true
+      msg_dim "Wi-Fi Power Save: отключен"
     fi
   fi
 
