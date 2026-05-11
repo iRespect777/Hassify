@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 9.9.7
+# Version: 9.9.8
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -16,7 +16,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="9.9.7"
+readonly SCRIPT_VERSION="9.9.8"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -67,6 +67,7 @@ OPT_REMOTE_BACKUP=false; OPT_BOOT_RECOVERY=true; OPT_USB_DETECT=true
 STATIC_IP=""; STATIC_GW=""; STATIC_DNS=""
 TG_TOKEN=""; TG_CHAT=""
 TS_AUTHKEY=""; REMOTE_BACKUP_TARGET=""
+BOOT_DIR=""
 SKIP_UPDATE=false; CHECK_ONLY=false; UNINSTALL=false
 DRY_RUN=false; SILENT=false; SHOW_STATUS=false
 DO_UPDATE=false; DO_SELF_TEST=false; DO_SELF_UPDATE=false
@@ -358,6 +359,7 @@ OPT_AUTO_REBOOT=${OPT_AUTO_REBOOT}
 OPT_LOCALE="${OPT_LOCALE}"
 OPT_TAILSCALE=${OPT_TAILSCALE}
 PROFILE="${PROFILE}"
+BOOT_DIR="${BOOT_DIR}"
 EOF
   chmod 600 "$HA_CONFIG_FILE"
 }
@@ -377,7 +379,7 @@ load_config() {
         OS_RELEASE_FAKED|OPT_ZRAM|OPT_UFW|OPT_WATCHDOG|\
         OPT_THERMAL|OPT_BACKUP|OPT_HACS|OPT_MONITORING|PROFILE|\
         OPT_DATA_DIR|OPT_TIMEZONE|OPT_WEBHOOK_URL|OPT_SWAP_SIZE|\
-        OPT_DOCKER_MIRROR|OPT_AUTO_REBOOT|OPT_LOCALE|OPT_TAILSCALE)
+        OPT_DOCKER_MIRROR|OPT_AUTO_REBOOT|OPT_LOCALE|OPT_TAILSCALE|BOOT_DIR)
           printf -v "$key" '%s' "$val"
           ;;
       esac
@@ -2079,6 +2081,17 @@ run_wizard() {
   # ADVANCED: all options
   # =============================================
 
+  # Boot directory
+  if [ "$HAS_WHIPTAIL" = true ]; then
+    if ! whiptail --title "Раздел загрузчика" --yesno "Использовать автоопределение каталога загрузчика?\n\n(Выберите 'Нет', если у вас TV-box и загрузчик примонтирован не в /boot, например в /media/boot)" 12 65; then
+      BOOT_DIR=$(_whip_input "Путь к загрузчику" "Куда примонтирован раздел с armbianEnv.txt или extlinux.conf" "/boot") || BOOT_DIR=""
+    fi
+  else
+    if ! text_yesno "Автоопределение загрузчика (/boot)?" "y"; then
+      BOOT_DIR=$(text_input "Путь к каталогу загрузчика" "/boot")
+    fi
+  fi
+  
   # Swap
   local eff_ram="${BENCH_RAM_MB:-$ram_mb}"
   local swap_rec="zram"
@@ -2832,6 +2845,39 @@ step_configure_network() {
 }
 
 # ============================================================================
+# BOOT DIR DETECTION
+# ============================================================================
+detect_boot_dir() {
+  # Если уже задан через CLI, Wizard или загружен из конфига — пропускаем
+  [ -n "$BOOT_DIR" ] && return 0
+
+  # 1. Проверяем стандартные точки монтирования
+  for dir in /boot /boot/firmware /media/boot /mnt/boot; do
+    # Ищем хотя бы один из конфигов загрузчика
+    if [ -d "$dir" ] && { [ -f "$dir/armbianEnv.txt" ] || [ -f "$dir/uEnv.txt" ] || [ -f "$dir/extlinux/extlinux.conf" ]; }; then
+      BOOT_DIR="$dir"
+      return 0
+    fi
+  done
+
+  # 2. Поиск по всему диску (если примонтировано в необычное место)
+  local found
+  found=$(find / -maxdepth 3 -type f \( -name "armbianEnv.txt" -o -name "extlinux.conf" \) 2>/dev/null | head -1)
+  if [ -n "$found" ]; then
+    # Если нашли extlinux.conf, каталогом считается родительский (обычно /boot)
+    if [[ "$found" == *"/extlinux/"* ]]; then
+      BOOT_DIR=$(dirname "$(dirname "$found")")
+    else
+      BOOT_DIR=$(dirname "$found")
+    fi
+    return 0
+  fi
+
+  # 3. Fallback — предполагаем стандартный /boot
+  BOOT_DIR="/boot"
+}
+
+# ============================================================================
 # ШАГ: APPARMOR
 # ============================================================================
 step_configure_apparmor() {
@@ -2851,9 +2897,35 @@ step_configure_apparmor() {
 
     msg_warn "AppArmor не активен в ядре"
 
+    # Определяем каталог загрузчика
+    detect_boot_dir
+    msg_info "Каталог загрузчика: ${BOOT_DIR}"
+
     local patched=false
-    for f in /boot/armbianEnv.txt /boot/uEnv.txt /boot/extlinux/extlinux.conf; do
-        [ -f "$f" ] || continue
+    
+    # Формируем список файлов на основе найденного каталога
+    local boot_files=()
+    [ -f "${BOOT_DIR}/armbianEnv.txt" ] && boot_files+=("${BOOT_DIR}/armbianEnv.txt")
+    [ -f "${BOOT_DIR}/uEnv.txt" ] && boot_files+=("${BOOT_DIR}/uEnv.txt")
+    [ -f "${BOOT_DIR}/extlinux/extlinux.conf" ] && boot_files+=("${BOOT_DIR}/extlinux/extlinux.conf")
+
+    # Если файлы не найдены даже после автоопределения, пытаемся искать в /boot как фоллбэк
+    if [ ${#boot_files[@]} -eq 0 ] && [ "$BOOT_DIR" != "/boot" ]; then
+        msg_warn "Конфиги не найдены в ${BOOT_DIR}, проверяем /boot..."
+        BOOT_DIR="/boot"
+        [ -f "${BOOT_DIR}/armbianEnv.txt" ] && boot_files+=("${BOOT_DIR}/armbianEnv.txt")
+        [ -f "${BOOT_DIR}/uEnv.txt" ] && boot_files+=("${BOOT_DIR}/uEnv.txt")
+        [ -f "${BOOT_DIR}/extlinux/extlinux.conf" ] && boot_files+=("${BOOT_DIR}/extlinux/extlinux.conf")
+    fi
+
+    if [ ${#boot_files[@]} -eq 0 ]; then
+        msg_error "Конфиг загрузчика не найден!"
+        msg_dim "AppArmor не будет активен. HA может работать с предупреждениями."
+        mark_done "$sid"
+        return 0
+    fi
+
+    for f in "${boot_files[@]}"; do
         cp "$f" "${BACKUP_DIR}/$(basename "$f").bak" 2>/dev/null
         grep -q "apparmor=1" "$f" && { patched=true; continue; }
 
@@ -5225,7 +5297,12 @@ Docker и сеть останутся.\n\
 
         # --- AppArmor в загрузчике ---
         msg_action "Очистка AppArmor из загрузчика..."
-        for f in /boot/armbianEnv.txt /boot/uEnv.txt /boot/extlinux/extlinux.conf; do
+        detect_boot_dir
+        local boot_files=()
+        [ -f "${BOOT_DIR}/armbianEnv.txt" ] && boot_files+=("${BOOT_DIR}/armbianEnv.txt")
+        [ -f "${BOOT_DIR}/uEnv.txt" ] && boot_files+=("${BOOT_DIR}/uEnv.txt")
+        [ -f "${BOOT_DIR}/extlinux/extlinux.conf" ] && boot_files+=("${BOOT_DIR}/extlinux/extlinux.conf")
+        for f in "${boot_files[@]}"; do
             [ -f "$f" ] || continue
             if grep -q "apparmor=1" "$f" 2>/dev/null; then
                 local bak="${BACKUP_DIR}/$(basename "$f").bak"
@@ -5788,6 +5865,8 @@ parse_args() {
       --tailscale)           OPT_TAILSCALE=true;;
       --ts-authkey)          shift; [ $# -eq 0 ] && { msg_error "--ts-authkey ?"; exit 1; }; TS_AUTHKEY="$1";;
       --ts-authkey=*)        TS_AUTHKEY="${1#*=}";;
+      --boot-dir)           shift; [ $# -eq 0 ] && { msg_error "--boot-dir ?"; exit 1; }; BOOT_DIR="$1";;
+      --boot-dir=*)         BOOT_DIR="${1#*=}";;
       *)                    msg_error "Неизвестная опция: $1"; show_help; exit 1;;
     esac
     shift
