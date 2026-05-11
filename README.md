@@ -40,7 +40,7 @@
 Самый простой способ запустить установщик — использовать интерактивный мастер:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iRespect777/HAS-tvbox/refs/heads/main/ha-installer/install.sh
+curl -fsSL https://raw.githubusercontent.com/iRespect777/HAS-tvbox/refs/heads/main/ha-installer/install.sh -o install.sh
 sudo bash install.sh
 ```
 Мастер проведет вас через выбор профиля, настройку сети, часового пояса и дополнительных компонентов.
