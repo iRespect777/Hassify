@@ -2875,8 +2875,8 @@ detect_boot_dir() {
     fi
   fi
 
-  # 1. Проверяем стандартные примонтированные точки
-  for dir in /boot /boot/firmware /media/boot /mnt/boot; do
+  # 1. Проверяем стандартные примонтированные точки (включая временный каталог, если установка была прервана)
+  for dir in /boot /boot/firmware /media/boot /mnt/boot /mnt/ha_boot_tmp; do
     if [ -d "$dir" ] && { [ -f "$dir/armbianEnv.txt" ] || [ -f "$dir/uEnv.txt" ] || [ -f "$dir/extlinux/extlinux.conf" ]; }; then
       BOOT_DIR="$dir"
       return 0
