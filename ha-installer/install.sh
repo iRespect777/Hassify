@@ -5465,6 +5465,20 @@ Docker и сеть останутся.\n\
             fi
         done
 
+        # --- Очистка fstab ---
+        if [ -n "$BOOT_DEV_FSTAB" ]; then
+            msg_action "Удаление записи загрузчика из /etc/fstab..."
+            local dev_uuid
+            dev_uuid=$(blkid -s UUID -o value "$BOOT_DEV_FSTAB" 2>/dev/null)
+            if [ -n "$dev_uuid" ]; then
+                sed -i "/UUID=$dev_uuid/d" /etc/fstab 2>/dev/null
+                msg_ok "Запись UUID=$dev_uuid удалена из fstab"
+            else
+                sed -i "\|^${BOOT_DEV_FSTAB}|d" /etc/fstab 2>/dev/null
+                msg_ok "Запись $BOOT_DEV_FSTAB удалена из fstab"
+            fi
+        fi
+
         # --- Сеть: восстановление ---
         msg_action "Восстановление сети..."
 
