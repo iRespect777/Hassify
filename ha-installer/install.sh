@@ -116,11 +116,11 @@ readonly ALL_STEPS=(preflight update deps network apparmor perf docker versions 
 readonly TOTAL_STEPS=${#ALL_STEPS[@]}
 
 declare -A PROFILES=(
-  [minimal]="OPT_ZRAM=true OPT_EMMC_TUNING=false OPT_USB_POWER=false OPT_UFW=false OPT_SSH_HARDENING=false OPT_AUTOUPDATE=false OPT_WATCHDOG=false OPT_THERMAL=false OPT_BACKUP=false OPT_HACS=false OPT_HOSTNAME=true OPT_MONITORING=false OPT_TAILSCALE=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=false OPT_USB_DETECT=false"
-  [standard]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_MONITORING=false OPT_TAILSCALE=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
-  [full]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_MONITORING=true OPT_TAILSCALE=true OPT_REMOTE_BACKUP=true OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
-  [server]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_STATIC_IP=true OPT_MONITORING=true OPT_TAILSCALE=true OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
-  [dev]="OPT_ZRAM=false OPT_EMMC_TUNING=false OPT_USB_POWER=false OPT_UFW=false OPT_SSH_HARDENING=false OPT_AUTOUPDATE=false OPT_WATCHDOG=false OPT_THERMAL=false OPT_BACKUP=false OPT_HACS=true OPT_HOSTNAME=false OPT_MONITORING=false OPT_TAILSCALE=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=false OPT_USB_DETECT=false"
+  [minimal]="OPT_ZRAM=true OPT_EMMC_TUNING=false OPT_USB_POWER=false OPT_UFW=false OPT_SSH_HARDENING=false OPT_AUTOUPDATE=false OPT_WATCHDOG=false OPT_THERMAL=false OPT_BACKUP=false OPT_HACS=false OPT_HOSTNAME=true OPT_MONITORING=false OPT_TAILSCALE=false OPT_CLOUDFLARED=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=false OPT_USB_DETECT=false"
+  [standard]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_MONITORING=false OPT_TAILSCALE=false OPT_CLOUDFLARED=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
+  [full]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_MONITORING=true OPT_TAILSCALE=true OPT_CLOUDFLARED=true OPT_REMOTE_BACKUP=true OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
+  [server]="OPT_ZRAM=true OPT_EMMC_TUNING=true OPT_USB_POWER=true OPT_UFW=true OPT_SSH_HARDENING=true OPT_AUTOUPDATE=true OPT_WATCHDOG=true OPT_THERMAL=true OPT_BACKUP=true OPT_HACS=true OPT_HOSTNAME=true OPT_STATIC_IP=true OPT_MONITORING=true OPT_TAILSCALE=true OPT_CLOUDFLARED=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=true OPT_USB_DETECT=true"
+  [dev]="OPT_ZRAM=false OPT_EMMC_TUNING=false OPT_USB_POWER=false OPT_UFW=false OPT_SSH_HARDENING=false OPT_AUTOUPDATE=false OPT_WATCHDOG=false OPT_THERMAL=false OPT_BACKUP=false OPT_HACS=true OPT_HOSTNAME=false OPT_MONITORING=false OPT_TAILSCALE=false OPT_CLOUDFLARED=false OPT_REMOTE_BACKUP=false OPT_BOOT_RECOVERY=false OPT_USB_DETECT=false"
 )
 
 # ============================================================================
@@ -361,6 +361,8 @@ OPT_DOCKER_MIRROR="${OPT_DOCKER_MIRROR}"
 OPT_AUTO_REBOOT=${OPT_AUTO_REBOOT}
 OPT_LOCALE="${OPT_LOCALE}"
 OPT_TAILSCALE=${OPT_TAILSCALE}
+OPT_CLOUDFLARED=${OPT_CLOUDFLARED}
+CF_TUNNEL_TOKEN="${CF_TUNNEL_TOKEN}"
 PROFILE="${PROFILE}"
 BOOT_DIR="${BOOT_DIR}"
 BOOT_DEV_FSTAB="${BOOT_DEV_FSTAB}"
@@ -383,7 +385,7 @@ load_config() {
         OS_RELEASE_FAKED|OPT_ZRAM|OPT_UFW|OPT_WATCHDOG|\
         OPT_THERMAL|OPT_BACKUP|OPT_HACS|OPT_MONITORING|PROFILE|\
         OPT_DATA_DIR|OPT_TIMEZONE|OPT_WEBHOOK_URL|OPT_SWAP_SIZE|\
-        OPT_DOCKER_MIRROR|OPT_AUTO_REBOOT|OPT_LOCALE|OPT_TAILSCALE|BOOT_DIR|BOOT_DEV_FSTAB)
+        OPT_DOCKER_MIRROR|OPT_AUTO_REBOOT|OPT_LOCALE|OPT_TAILSCALE|BOOT_DIR|BOOT_DEV_FSTAB|OPT_CLOUDFLARED|CF_TUNNEL_TOKEN)
           printf -v "$key" '%s' "$val"
           ;;
       esac
@@ -421,7 +423,7 @@ export_config() {
     for opt in OPT_ZRAM OPT_EMMC_TUNING OPT_USB_POWER OPT_UFW OPT_SSH_HARDENING \
       OPT_AUTOUPDATE OPT_WATCHDOG OPT_THERMAL OPT_BACKUP OPT_HACS OPT_HOSTNAME \
       OPT_MONITORING OPT_BOOT_RECOVERY OPT_USB_DETECT OPT_STATIC_IP OPT_TELEGRAM \
-      OPT_TAILSCALE OPT_REMOTE_BACKUP; do
+      OPT_TAILSCALE OPT_REMOTE_BACKUP OPT_CLOUDFLARED; do
       echo "${opt}=${!opt}"
     done
     echo "PROFILE=\"${PROFILE}\""
@@ -1861,14 +1863,15 @@ _wizard_select_components() {
       "HACS" "HACS" ON "HOSTNAME" "Имя хоста" ON "MONITOR" "Мониторинг" OFF \
       "USBDETECT" "Поиск USB" ON "BOOTRECOV" "Восст. загрузки" ON \
       "STATICIP" "Стат. IP" OFF "TELEGRAM" "Telegram" OFF \
-      "TAILSCALE" "Tailscale VPN (удал. доступ)" OFF "RBACKUP" "Удал. бэкап (rclone/rsync)" OFF \
+      "TAILSCALE" "Tailscale VPN (удал. доступ)" OFF "CLOUDFLARED" "Cloudflare Tunnel (публичный HTTPS)" OFF \
+      "RBACKUP" "Удал. бэкап (rclone/rsync)" OFF \
       3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && return 1
 
     OPT_ZRAM=false; OPT_EMMC_TUNING=false; OPT_USB_POWER=false; OPT_UFW=false
     OPT_SSH_HARDENING=false; OPT_AUTOUPDATE=false; OPT_WATCHDOG=false; OPT_THERMAL=false
     OPT_BACKUP=false; OPT_HACS=false; OPT_HOSTNAME=false; OPT_STATIC_IP=false
-    OPT_TELEGRAM=false; OPT_MONITORING=false; OPT_TAILSCALE=false
+    OPT_TELEGRAM=false; OPT_MONITORING=false; OPT_TAILSCALE=false; OPT_CLOUDFLARED=false
     OPT_REMOTE_BACKUP=false; OPT_BOOT_RECOVERY=false; OPT_USB_DETECT=false
 
     [[ $ch == *ZRAM* ]]      && OPT_ZRAM=true
@@ -1886,6 +1889,7 @@ _wizard_select_components() {
     [[ $ch == *TELEGRAM* ]]  && OPT_TELEGRAM=true
     [[ $ch == *MONITOR* ]]   && OPT_MONITORING=true
     [[ $ch == *TAILSCALE* ]]  && OPT_TAILSCALE=true
+    [[ $ch == *CLOUDFLARED* ]] && OPT_CLOUDFLARED=true
     [[ $ch == *RBACKUP* ]]   && OPT_REMOTE_BACKUP=true
     [[ $ch == *BOOTRECOV* ]] && OPT_BOOT_RECOVERY=true
     [[ $ch == *USBDETECT* ]] && OPT_USB_DETECT=true
@@ -1903,6 +1907,7 @@ _wizard_select_components() {
     text_yesno "Стат. IP" "n"          && OPT_STATIC_IP=true    || OPT_STATIC_IP=false
     text_yesno "Telegram" "n"          && OPT_TELEGRAM=true     || OPT_TELEGRAM=false
     text_yesno "Tailscale VPN" "n"     && OPT_TAILSCALE=true   || OPT_TAILSCALE=false
+    text_yesno "Cloudflare Tunnel" "n" && OPT_CLOUDFLARED=true || OPT_CLOUDFLARED=false
     text_yesno "Удал. бэкап" "n"       && OPT_REMOTE_BACKUP=true || OPT_REMOTE_BACKUP=false
   fi
   PROFILE="custom"
@@ -1970,6 +1975,8 @@ run_wizard() {
   OPT_TAILSCALE=false
   TS_AUTHKEY=""
   REMOTE_BACKUP_TARGET=""
+  OPT_CLOUDFLARED=false
+  CF_TUNNEL_TOKEN=""
 
   # =============================================
   # STEP 1: MODE (quick or advanced)
@@ -2288,6 +2295,15 @@ run_wizard() {
     fi
   fi
 
+  # Cloudflare Tunnel
+  if [ "$OPT_CLOUDFLARED" = true ]; then
+    if [ "$HAS_WHIPTAIL" = true ]; then
+      CF_TUNNEL_TOKEN=$(_whip_input "Cloudflare Tunnel Token" "Вставьте токен туннеля из Cloudflare Zero Trust Dashboard.\n\nОставьте ПУСТЫМ, если хотите настроить туннель вручную позже (sudo cloudflared service install <ТОКЕН>)." "") || CF_TUNNEL_TOKEN=""
+    else
+      CF_TUNNEL_TOKEN=$(text_input "Cloudflare Tunnel Token (оставьте пустым для настройки позже)" "")
+    fi
+  fi
+  
   # Remote backup (if selected)
   if [ "$OPT_REMOTE_BACKUP" = true ]; then
     if [ "$HAS_WHIPTAIL" = true ]; then
@@ -4306,6 +4322,67 @@ UNIT
     fi
   fi
 
+  # --- Cloudflare Tunnel ---
+  if [ "$OPT_CLOUDFLARED" = true ]; then
+    msg_action "Настройка Cloudflare Tunnel..."
+    
+    # Сохраняем Token в secrets
+    local secrets_dir="${HA_INSTALLER_DIR}/secrets"
+    if [ -n "${CF_TUNNEL_TOKEN}" ]; then
+      printf '%s' "${CF_TUNNEL_TOKEN}" > "${secrets_dir}/cf_token"
+      chmod 600 "${secrets_dir}/cf_token"
+    fi
+
+    # Устанавливаем бинарник (надежнее чем репозиторий для ARM боксов)
+    if ! command -v cloudflared &>/dev/null; then
+      local cf_arch=""
+      case "$CACHED_MACHINE_ARCH" in
+        x86_64)  cf_arch="amd64" ;;
+        aarch64) cf_arch="arm64" ;;
+        armv7l)  cf_arch="arm" ;;
+        *)       msg_warn "Архитектура не поддерживается Cloudflared"; cf_arch="" ;;
+      esac
+
+      if [ -n "$cf_arch" ]; then
+        msg_dim "Загрузка cloudflared для ${cf_arch}..."
+        if curl -L --fail --progress-bar "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cf_arch}" -o /usr/local/bin/cloudflared; then
+          chmod +x /usr/local/bin/cloudflared
+          msg_ok "Cloudflared установлен"
+        else
+          msg_error "Не удалось загрузить cloudflared"
+        fi
+      fi
+    else
+      msg_ok "Cloudflared уже установлен"
+    fi
+
+    # Настройка и запуск службы (через Token — официальный метод)
+    if command -v cloudflared &>/dev/null; then
+      # Читаем токен из secrets, если не передан прямо сейчас (для переустановок)
+      if [ -z "$CF_TUNNEL_TOKEN" ] && [ -f "${secrets_dir}/cf_token" ]; then
+        CF_TUNNEL_TOKEN=$(cat "${secrets_dir}/cf_token" | tr -d '[:space:]')
+      fi
+
+      if [ -n "$CF_TUNNEL_TOKEN" ]; then
+        msg_dim "Регистрация туннеля в Cloudflare..."
+        # Удаляем старый сервис если был, чтобы избежать конфликтов
+        cloudflared service uninstall >/dev/null 2>&1 || true
+        
+        # Официальная команда установки (сама создает systemd сервис)
+        if cloudflared service install "$CF_TUNNEL_TOKEN" >/dev/null 2>&1; then
+          systemctl enable cloudflared >/dev/null 2>&1 || true
+          systemctl start cloudflared >/dev/null 2>&1 || true
+          msg_ok "Cloudflare Tunnel настроен и запущен"
+        else
+          msg_error "Ошибка установки сервиса Cloudflare (неверный токен?)"
+        fi
+      else
+        msg_warn "Токен не предоставлен. Сервис не настроен."
+        msg_dim "Для настройки позже: sudo cloudflared service install <ТОКЕН>"
+      fi
+    fi
+  fi
+  
   detect_usb_dongles
 
   # --- Cron ---
@@ -5206,6 +5283,14 @@ Docker и сеть останутся.\n\
         rm -f "${HA_INSTALLER_DIR}/secrets/ts_authkey" 2>/dev/null || true
     fi
 
+    # Удаление Cloudflared
+    if command -v cloudflared &>/dev/null; then
+        cloudflared service uninstall >/dev/null 2>&1 || true
+        rm -f /usr/local/bin/cloudflared
+        rm -f /etc/systemd/system/cloudflared.service
+        rm -f "${HA_INSTALLER_DIR}/secrets/cf_token" 2>/dev/null || true
+    fi
+    
     # --- Avahi ---
     if [ -f /etc/avahi/avahi-daemon.conf ] && grep -q "host-name=homeassistant" /etc/avahi/avahi-daemon.conf 2>/dev/null; then
         rm -f /etc/avahi/avahi-daemon.conf
@@ -6143,6 +6228,7 @@ show_final() {
   [ "$OPT_MONITORING" = true ]    && echo -e "   ${CHECK} Мониторинг"
   [ "$OPT_BOOT_RECOVERY" = true ] && echo -e "   ${CHECK} Восст. загрузки"
   [ "$OPT_TAILSCALE" = true ] && echo -e "   ${CHECK} Tailscale VPN"
+  [ "$OPT_CLOUDFLARED" = true ]   && echo -e "   ${CHECK} Cloudflare Tunnel"
   [ -n "$OPT_RESTORE_BACKUP" ]    && echo -e "   ${CHECK} Восстановлено: $(basename "$OPT_RESTORE_BACKUP")"
   [ "$OS_RELEASE_FAKED" = true ]   && echo -e "   ${WARN} os-release подменяется при старте supervisor"
 
@@ -6182,6 +6268,20 @@ show_final() {
       echo -e "   ${WHITE}1.${NC} На телефоне/ПК установите приложение Tailscale и войдите в аккаунт"
       echo -e "   ${WHITE}2.${NC} На TV-боксе выполните команду: ${CYAN}sudo tailscale up${NC}"
       echo -e "   ${WHITE}3.${NC} В терминале появится ссылка — откройте её в браузере"
+    fi
+    echo ""
+  fi
+  # Инструкция по Cloudflare
+  if [ "$OPT_CLOUDFLARED" = true ]; then
+    if systemctl is-active --quiet cloudflared 2>/dev/null; then
+      echo -e "\n   ${GREEN}${BOLD}Cloudflare Tunnel запущен!${NC}"
+      echo -e "   ${DIM}Ваш Home Assistant доступен публично по HTTPS через Cloudflare."
+    else
+      echo -e "\n   ${YELLOW}${BOLD}Важно про Cloudflare Tunnel:${NC}"
+      echo -e "   ${DIM}Cloudflared установлен, но требует настройки!"
+      echo -e "   ${WHITE}1.${NC} Зайдите в Cloudflare Zero Trust Dashboard -> Networks -> Tunnels"
+      echo -e "   ${WHITE}2.${NC} Создайте туннель и скопируйте токен"
+      echo -e "   ${WHITE}3.${NC} Выполните команду: ${CYAN}sudo cloudflared service install <ТОКЕН>${NC}"
     fi
     echo ""
   fi
