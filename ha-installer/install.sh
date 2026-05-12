@@ -2325,52 +2325,94 @@ run_wizard() {
   # CONFIRMATION
   # =============================================
   local s="Установка Home Assistant Supervised\n\n"
-  s+="  Профиль:      ${PROFILE}\n"
-  s+="  Часовой пояс: ${OPT_TIMEZONE}\n"
-  s+="  Swap:         ${OPT_SWAP_SIZE:-zram}\n"
   
-  # Собираем список включенных базовых компонентов в одну строку для экономии места
-  local components=""
-  [ "$OPT_ZRAM" = true ]           && components+="ZRAM "
-  [ "$OPT_EMMC_TUNING" = true ]    && components+="eMMC "
-  [ "$OPT_USB_POWER" = true ]      && components+="USB_Pwr "
-  [ "$OPT_UFW" = true ]            && components+="UFW "
-  [ "$OPT_SSH_HARDENING" = true ]  && components+="SSH "
-  [ "$OPT_AUTOUPDATE" = true ]     && components+="AutoUpd "
-  [ "$OPT_WATCHDOG" = true ]       && components+="Watchdog "
-  [ "$OPT_THERMAL" = true ]        && components+="Thermal "
-  [ "$OPT_BACKUP" = true ]         && components+="Backup "
-  [ "$OPT_HACS" = true ]           && components+="HACS "
-  [ "$OPT_HOSTNAME" = true ]       && components+="Hostname "
-  [ "$OPT_MONITORING" = true ]     && components+="Monitor "
-  [ "$OPT_BOOT_RECOVERY" = true ]  && components+="BootRec "
-  [ "$OPT_USB_DETECT" = true ]     && components+="USB_Detect "
-  
-  [ -n "$components" ] && s+="  Компоненты:   ${components}\n"
+  # --- Система ---
+  local swap_desc="${OPT_SWAP_SIZE:-zram}"
+  if [ "$OPT_SWAP_SIZE" = "zram" ]; then
+    swap_desc="ZRAM (60% RAM)"
+  elif [[ "$OPT_SWAP_SIZE" =~ ^[0-9]+$ ]]; then
+    swap_desc="Файл ${OPT_SWAP_SIZE}MB"
+  elif [ "$OPT_SWAP_SIZE" = "none" ]; then
+    swap_desc="Отключен"
+  fi
+  local sys="Профиль: ${PROFILE}"
+  sys+=", Часовой пояс: ${OPT_TIMEZONE}"
+  [ -n "$OPT_LOCALE" ] && sys+=", Локаль: ${OPT_LOCALE}"
+  sys+=", Swap: ${swap_desc}"
+  [ "$OPT_AUTO_REBOOT" = true ] && sys+=", Авто-перезагрузка"
+  s+="  Система:      ${sys}\n"
 
-  # Специфичные настройки
-  [ -n "$OPT_DATA_DIR" ]           && s+="  Данные:       ${OPT_DATA_DIR}\n"
-  [ -n "$OPT_WIFI_SSID" ]          && s+="  WiFi:         ${OPT_WIFI_SSID}\n"
-  [ -n "$OPT_DOCKER_MIRROR" ]      && s+="  Зеркало Docker: да\n"
-  [ -n "$OPT_RESTORE_BACKUP" ]     && s+="  Восст. бэкапа: $(basename "$OPT_RESTORE_BACKUP")\n"
-  [ -n "$OPT_LOCALE" ]             && s+="  Локаль:       ${OPT_LOCALE}\n"
-  [ "$OPT_AUTO_REBOOT" = true ]    && s+="  Перезагрузка: авто\n"
-  [ "$OPT_STATIC_IP" = true ]      && s+="  Стат. IP:     ${STATIC_IP}\n"
-  
-  # Сеть и VPN
-  [ "$OPT_TAILSCALE" = true ]      && s+="  Tailscale:    да\n"
-  [ "$OPT_CLOUDFLARED" = true ]    && s+="  Cloudflare:   да\n"
-  [ -n "$BOOT_DEV_FSTAB" ]         && s+="  Загрузчик:    ${BOOT_DEV_FSTAB}\n"
-  
-  # Уведомления
-  [ "$OPT_TELEGRAM" = true ]       && s+="  Telegram:     да\n"
-  [ -n "$OPT_WEBHOOK_URL" ]        && s+="  Webhook:      да\n"
-  
+  # --- Доступ и Сеть ---
+  local net=""
+  if [ "$OPT_TAILSCALE" = true ]; then
+    net+="Tailscale"
+    [ -n "$TS_AUTHKEY" ] && net+=" (ключ задан)" || net+=" (ручной логин)"
+    net+=", "
+  fi
+  if [ "$OPT_CLOUDFLARED" = true ]; then
+    net+="Cloudflare"
+    [ -n "$CF_TUNNEL_TOKEN" ] && net+=" (токен задан)" || net+=" (ручная настройка)"
+    net+=", "
+  fi
+  [ -n "$OPT_WIFI_SSID" ] && net+="WiFi: ${OPT_WIFI_SSID}, "
+  [ "$OPT_STATIC_IP" = true ] && net+="IP: ${STATIC_IP}/${STATIC_GW}, DNS: ${STATIC_DNS}, "
+  if [ -n "$net" ]; then net="${net%, }"; s+="  Доступ:       ${net}\n"; fi
+
+  # --- Безопасность ---
+  local sec=""
+  [ "$OPT_UFW" = true ] && sec+="UFW, "
+  [ "$OPT_SSH_HARDENING" = true ] && sec+="Защита SSH, "
+  [ "$OPT_AUTOUPDATE" = true ] && sec+="Автообновления ОС, "
+  if [ -n "$sec" ]; then sec="${sec%, }"; s+="  Безопасность: ${sec}\n"; fi
+
+  # --- Надежность ---
+  local rel=""
+  [ "$OPT_WATCHDOG" = true ] && rel+="Watchdog, "
+  [ "$OPT_THERMAL" = true ] && rel+="Термомонитор, "
+  [ "$OPT_BOOT_RECOVERY" = true ] && rel+="Восст. загрузки, "
+  if [ -n "$rel" ]; then rel="${rel%, }"; s+="  Надежность:   ${rel}\n"; fi
+
+  # --- Оптимизация ---
+  local opt=""
+  [ "$OPT_EMMC_TUNING" = true ] && opt+="eMMC (noatime), "
+  [ "$OPT_USB_POWER" = true ] && opt+="USB питание, "
+  [ "$OPT_USB_DETECT" = true ] && opt+="Детект USB, "
+  if [ -n "$opt" ]; then opt="${opt%, }"; s+="  Оптимизация:  ${opt}\n"; fi
+
+  # --- Бэкапы ---
+  local bak=""
+  [ "$OPT_BACKUP" = true ] && bak+="Локальные, "
+  if [ "$OPT_REMOTE_BACKUP" = true ] && [ -n "$REMOTE_BACKUP_TARGET" ]; then
+    bak+="Удаленные (${REMOTE_BACKUP_TARGET}), "
+  fi
+  [ -n "$OPT_RESTORE_BACKUP" ] && bak+="Восст. из $(basename "$OPT_RESTORE_BACKUP"), "
+  if [ -n "$bak" ]; then bak="${bak%, }"; s+="  Бэкапы:       ${bak}\n"; fi
+
+  # --- Компоненты HA ---
+  local ha_comp=""
+  [ "$OPT_HACS" = true ] && ha_comp+="HACS, "
+  [ "$OPT_HOSTNAME" = true ] && ha_comp+="Hostname, "
+  [ "$OPT_MONITORING" = true ] && ha_comp+="Prometheus, "
+  if [ -n "$ha_comp" ]; then ha_comp="${ha_comp%, }"; s+="  Компоненты:   ${ha_comp}\n"; fi
+
+  # --- Уведомления ---
+  local notif=""
+  [ "$OPT_TELEGRAM" = true ] && notif+="Telegram, "
+  [ -n "$OPT_WEBHOOK_URL" ] && notif+="Webhook (${OPT_WEBHOOK_URL}), "
+  if [ -n "$notif" ]; then notif="${notif%, }"; s+="  Уведомления:  ${notif}\n"; fi
+
+  # --- Расположение ---
+  local loc=""
+  [ -n "$OPT_DATA_DIR" ] && loc+="Данные: ${OPT_DATA_DIR}, "
+  [ -n "$BOOT_DEV_FSTAB" ] && loc+="Загрузчик: ${BOOT_DEV_FSTAB}, "
+  [ -n "$OPT_DOCKER_MIRROR" ] && loc+="Зеркало Docker: ${OPT_DOCKER_MIRROR}, "
+  if [ -n "$loc" ]; then loc="${loc%, }"; s+="  Расположение: ${loc}\n"; fi
+
   s+="\nНачать установку? (Нет = вернуться в меню)"
 
   if [ "$HAS_WHIPTAIL" = true ]; then
-    # Безопасный размер: 22 строки высотой, 75 символов шириной.
-    whiptail --title "Подтверждение" --yesno "$s" 22 75 && return 0
+    # Высота 25 строк: хватит для самых длинных URL и путей с переносом
+    whiptail --title "Подтверждение" --yesno "$s" 25 78 && return 0
     _wizard_cancelled && return 1 || exit 0
   else
     echo -e "\n$s" >&2
