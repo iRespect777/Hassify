@@ -69,6 +69,8 @@ TG_TOKEN=""; TG_CHAT=""
 TS_AUTHKEY=""; REMOTE_BACKUP_TARGET=""
 BOOT_DIR=""
 BOOT_DEV_FSTAB=""
+OPT_CLOUDFLARED=false
+CF_TUNNEL_TOKEN=""
 SKIP_UPDATE=false; CHECK_ONLY=false; UNINSTALL=false
 DRY_RUN=false; SILENT=false; SHOW_STATUS=false
 DO_UPDATE=false; DO_SELF_TEST=false; DO_SELF_UPDATE=false
@@ -6057,6 +6059,9 @@ parse_args() {
       --boot-dir=*)         BOOT_DIR="${1#*=}";;
       --boot-dev)           shift; [ $# -eq 0 ] && { msg_error "--boot-dev ?"; exit 1; }; BOOT_DEV_FSTAB="$1";;
       --boot-dev=*)         BOOT_DEV_FSTAB="${1#*=}";;
+      --cloudflared)       OPT_CLOUDFLARED=true;;
+      --cf-token)          shift; [ $# -eq 0 ] && { msg_error "--cf-token ?"; exit 1; }; CF_TUNNEL_TOKEN="$1";;
+      --cf-token=*)        CF_TUNNEL_TOKEN="${1#*=}";;
       *)                    msg_error "Неизвестная опция: $1"; show_help; exit 1;;
     esac
     shift
