@@ -4076,22 +4076,38 @@ REMOTE="${REMOTE_BACKUP_TARGET}"
 BD="${HA_BACKUP_DIR}"
 
 # 1. Определяем, какой файл бэкапить (Полный снапшот или TAR)
-LATEST_FILE=""
-if command -v ha &>/dev/null; then
-  LATEST_SLUG=\$(ha backups list 2>/dev/null | jq -r '.data.backups | sort_by(.date) | reverse | .[0].slug' 2>/dev/null)
-  if [ -n "\$LATEST_SLUG" ]; then
-    SNAPSHOT_DIR="/usr/share/hassio/backup"
-    [ -f "\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar" ] && LATEST_FILE="\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar"
-  fi
-fi
+    LATEST_FILE=""
 
-if [ -z "\$LATEST_FILE" ]; then
-  LATEST_FILE=\$(ls -1t "\$BD"/ha_config_*.tar.gz 2>/dev/null | head -1)
-fi
+    # Определяем каталог с бэкапами. Зависит от типа установки (Debian pkg vs Docker/OVA)
+    if [ -d "/var/lib/homeassistant/backup" ]; then
+        SNAPSHOT_DIR="/var/lib/homeassistant/backup"
+    elif [ -d "/usr/share/hassio/backup" ]; then
+        SNAPSHOT_DIR="/usr/share/hassio/backup"
+    else
+        SNAPSHOT_DIR="/usr/share/hassio/backups"
+    fi
 
-if [ -z "\$LATEST_FILE" ] || [ ! -f "\$LATEST_FILE" ]; then
-  echo "Локальные бэкапы не найдены"; exit 1
-fi
+    # Способ 1: Пытаемся найти последний полный снапшот через HA CLI (самый точный)
+    if command -v ha &>/dev/null && command -v jq &>/dev/null; then
+      LATEST_SLUG=\$(ha backups list 2>/dev/null | jq -r '.data.backups | sort_by(.date) | reverse | .[0].slug' 2>/dev/null)
+      if [ -n "\$LATEST_SLUG" ]; then
+        [ -f "\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar" ] && LATEST_FILE="\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar"
+      fi
+    fi
+
+    # Способ 2: Если HA CLI не сработал (часто бывает на TV-box), просто берем самый свежий .tar в папке
+    if [ -z "\$LATEST_FILE" ] && [ -d "\$SNAPSHOT_DIR" ]; then
+      LATEST_FILE=\$(ls -1t "\${SNAPSHOT_DIR}"/*.tar 2>/dev/null | head -1)
+    fi
+
+    # Способ 3: Если полных снапшотов нет вообще, ищем быстрый бэкап (tar.gz), созданный скриптом ha-backup
+    if [ -z "\$LATEST_FILE" ]; then
+      LATEST_FILE=\$(ls -1t "\$BD"/ha_config_*.tar.gz 2>/dev/null | head -1)
+    fi
+
+    if [ -z "\$LATEST_FILE" ] || [ ! -f "\$LATEST_FILE" ]; then
+      echo "Локальные бэкапы не найдены"; exit 1
+    fi
 
 echo "Отправка бэкапа \$(basename "\$LATEST_FILE") в \$REMOTE ..."
 
