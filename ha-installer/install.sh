@@ -2325,43 +2325,26 @@ run_wizard() {
   # CONFIRMATION
   # =============================================
   local s="Установка Home Assistant Supervised\n\n"
-  s+="  Профиль:      ${PROFILE}\n"
-  s+="  Часовой пояс: ${OPT_TIMEZONE}\n"
-  s+="  Swap:         ${OPT_SWAP_SIZE:-zram}\n"
-  [ -n "$OPT_DATA_DIR" ]          && s+="  Данные:       ${OPT_DATA_DIR}\n"
-  [ -n "$OPT_WIFI_SSID" ]         && s+="  WiFi:         ${OPT_WIFI_SSID}\n"
+  s+="  Профиль:        ${PROFILE}\n"
+  s+="  Часовой пояс:   ${OPT_TIMEZONE}\n"
+  s+="  Swap:           ${OPT_SWAP_SIZE:-zram}\n"
+  [ -n "$OPT_DATA_DIR" ]          && s+="  Данные:         ${OPT_DATA_DIR}\n"
+  [ -n "$OPT_WIFI_SSID" ]         && s+="  WiFi:           ${OPT_WIFI_SSID}\n"
   [ -n "$OPT_DOCKER_MIRROR" ]     && s+="  Зеркало Docker: да\n"
-  [ -n "$OPT_RESTORE_BACKUP" ]    && s+="  Восстановить: $(basename "$OPT_RESTORE_BACKUP")\n"
-  [ -n "$OPT_LOCALE" ]            && s+="  Локаль:       ${OPT_LOCALE}\n"
-  [ "$OPT_AUTO_REBOOT" = true ]   && s+="  Перезагрузка: авто\n"
-
-  s+="\nВключенные компоненты:\n"
-  [ "$OPT_ZRAM" = true ]          && s+="  + ZRAM\n"
-  [ "$OPT_EMMC_TUNING" = true ]   && s+="  + Оптимизация eMMC\n"
-  [ "$OPT_USB_POWER" = true ]     && s+="  + USB питание\n"
-  [ "$OPT_UFW" = true ]           && s+="  + Файрвол (UFW + Fail2Ban)\n"
-  [ "$OPT_SSH_HARDENING" = true ] && s+="  + Защита SSH\n"
-  [ "$OPT_AUTOUPDATE" = true ]    && s+="  + Автообновления ОС\n"
-  [ "$OPT_WATCHDOG" = true ]      && s+="  + Watchdog\n"
-  [ "$OPT_THERMAL" = true ]       && s+="  + Термомонитор\n"
-  [ "$OPT_BACKUP" = true ]        && s+="  + Локальные бэкапы\n"
-  [ "$OPT_REMOTE_BACKUP" = true ] && s+="  + Удалённые бэкапы\n"
-  [ "$OPT_HACS" = true ]          && s+="  + HACS\n"
-  [ "$OPT_HOSTNAME" = true ]      && s+="  + Имя хоста (homeassistant)\n"
-  [ "$OPT_MONITORING" = true ]    && s+="  + Мониторинг (Prometheus)\n"
-  [ "$OPT_BOOT_RECOVERY" = true ] && s+="  + Восстановление загрузки\n"
-  [ "$OPT_USB_DETECT" = true ]    && s+="  + Поиск USB-донглов\n"
-  [ "$OPT_STATIC_IP" = true ]     && s+="  + Статический IP: ${STATIC_IP}\n"
-  [ "$OPT_TAILSCALE" = true ]     && s+="  + Tailscale VPN\n"
-
-  s+="\nУведомления:\n"
-  [ "$OPT_TELEGRAM" = true ]      && s+="  + Telegram\n"
-  [ -n "$OPT_WEBHOOK_URL" ]       && s+="  + Webhook\n"
-
+  [ -n "$OPT_RESTORE_BACKUP" ]    && s+="  Восст. бэкапа:  $(basename "$OPT_RESTORE_BACKUP")\n"
+  [ -n "$OPT_LOCALE" ]            && s+="  Локаль:         ${OPT_LOCALE}\n"
+  [ "$OPT_AUTO_REBOOT" = true ]   && s+="  Перезагрузка:   авто\n"
+  [ "$OPT_STATIC_IP" = true ]     && s+="  Стат. IP:       ${STATIC_IP}\n"
+  [ "$OPT_TAILSCALE" = true ]     && s+="  Tailscale:      да\n"
+  [ "$OPT_CLOUDFLARED" = true ]   && s+="  Cloudflare:     да\n"
+  [ -n "$BOOT_DEV_FSTAB" ]        && s+="  Загрузчик:      ${BOOT_DEV_FSTAB}\n"
+  [ "$OPT_TELEGRAM" = true ]      && s+="  Telegram:       да\n"
+  [ -n "$OPT_WEBHOOK_URL" ]       && s+="  Webhook:        да\n"
   s+="\nНачать установку?\n(Нет = вернуться в меню)"
 
   if [ "$HAS_WHIPTAIL" = true ]; then
-    whiptail --title "Подтверждение" --yesno "$s" 30 60 && return 0
+    # Увеличены размеры окна: высота 35 строк, ширина 75 символов
+    whiptail --title "Подтверждение" --yesno "$s" 35 75 && return 0
     _wizard_cancelled && return 1 || exit 0
   else
     echo -e "\n$s" >&2
