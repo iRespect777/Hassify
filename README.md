@@ -1,4 +1,4 @@
-# 🏠 Home Assistant Supervised - Ultimate Installer for TV-Boxes & SBC
+# 🏠 Home Assistant Supervised - Ultimate Installer
 
 [![Bash](https://img.shields.io/badge/Language-Bash%20%3E%3D%204.0-green.svg)](https://www.gnu.org/software/bash/) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
  
