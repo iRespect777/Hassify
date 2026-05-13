@@ -2453,7 +2453,7 @@ show_main_menu() {
   if command -v whiptail &>/dev/null; then
     choice=$(whiptail --title "HA Установщик v${SCRIPT_VERSION}" --menu "Действие:" 24 60 15 \
       "install"   "Установить HA Supervised" \
-      "modules"   "Установить отдельные модули (Tailscale, VPN и пр.)"\
+      "modules"   "Установить модули (VPN, UFW, Cloudflare)" \
       "check"     "Диагностика" \
       "status"    "Мониторинг (live)" \
       "update"    "Обновить OS-Agent" \
@@ -2471,7 +2471,7 @@ show_main_menu() {
   else
     choice=$(text_menu "HA Установщик v${SCRIPT_VERSION}" "Действие:" \
       "install"   "Установить HA" \
-      "modules"   "Установить отдельные модули (Tailscale, VPN и пр.)"\
+      "modules"   "Установить модули (VPN, UFW, Cloudflare)" \
       "check"     "Диагностика" \
       "status"    "Мониторинг" \
       "update"    "Обновить OS-Agent" \
@@ -2550,7 +2550,7 @@ show_main_menu() {
 
 # --- SYSTEM & PERFORMANCE ---
 setup_timezone() {
-  local tz="$1"
+  local tz="${1:-}"
   [ -z "$tz" ] && return 0
   if [ -f "/usr/share/zoneinfo/${tz}" ]; then
     timedatectl set-timezone "$tz" 2>/dev/null || ln -sf "/usr/share/zoneinfo/${tz}" /etc/localtime
@@ -2561,7 +2561,7 @@ setup_timezone() {
 }
 
 setup_locale() {
-  local loc="$1"
+  local loc="${1:-}"
   [ -z "$loc" ] && return 0
   if command -v locale-gen &>/dev/null; then
     sed -i "s/^# *${loc}/${loc}/" /etc/locale.gen 2>/dev/null
@@ -2572,7 +2572,7 @@ setup_locale() {
 }
 
 setup_swap() {
-  local size="$1"
+  local size="${1:-}"
   [ -z "$size" ] && return 0
   case "$size" in
     none|0) swapoff -a 2>/dev/null; sed -i '/swap/d' /etc/fstab 2>/dev/null; msg_ok "Swap отключен" ;;
@@ -2646,23 +2646,19 @@ install_docker() {
 }
 
 configure_docker_mirror() {
-  local mirror_url="$1"; [ -z "$mirror_url" ] && return 0
+  local mirror_url="${1:-}"; [ -z "$mirror_url" ] && return 0
   mkdir -p /etc/docker
   if command -v jq &>/dev/null; then
-    # Если файла нет, создаем базовый для корректной работы jq
     [ ! -f /etc/docker/daemon.json ] && echo '{}' > /etc/docker/daemon.json
     jq --arg m "$mirror_url" '. + {"registry-mirrors": [$m]}' /etc/docker/daemon.json > /tmp/dj.tmp 2>/dev/null && mv /tmp/dj.tmp /etc/docker/daemon.json
     msg_ok "Зеркало Docker: ${mirror_url}"
   else
-    # БЕЗОПАСНОСТЬ: Если jq нет, мы НЕ перезаписываем daemon.json целиком, 
-    # чтобы не сломать текущую конфигурацию на уже работающей системе.
-    msg_warn "Утилита jq не установлена. Не удалось безопасно добавить зеркало в daemon.json"
-    msg_dim "Добавьте вручную: ${mirror_url}"
+    msg_warn "jq не установлен. Не удалось добавить зеркало автоматически."
   fi
 }
 
 setup_data_dir() {
-  local target_dir="$1"; [ -z "$target_dir" ] && return 0
+  local target_dir="${1:-}"; [ -z "$target_dir" ] && return 0
   if [ ! -d "$target_dir" ]; then msg_error "Каталог не найден: ${target_dir}"; return 1; fi
   if ! touch "${target_dir}/.ha_test" 2>/dev/null; then msg_error "Нет доступа: ${target_dir}"; return 1; fi
   rm -f "${target_dir}/.ha_test"
@@ -2720,7 +2716,7 @@ configure_tailscale_ufw() {
 }
 
 auth_tailscale() {
-  local ts_key="$1"
+  local ts_key="${1:-}"
   if [ -n "$ts_key" ]; then
     msg_dim "Авторизация через Auth Key..."
     tailscale up --authkey="$ts_key" --accept-routes >/dev/null 2>&1 && msg_ok "Tailscale авторизован" || msg_warn "Ошибка авторизации"
@@ -2738,7 +2734,7 @@ install_cloudflared() {
 }
 
 configure_cloudflare_tunnel() {
-  local cf_token="$1"
+  local cf_token="${1:-}"
   if [ -n "$cf_token" ]; then
     msg_dim "Регистрация туннеля..."; cloudflared service uninstall >/dev/null 2>&1 || true
     if cloudflared service install "$cf_token" >/dev/null 2>&1; then
@@ -2753,7 +2749,6 @@ configure_ufw_safe() {
   if ! ufw status 2>/dev/null | grep -q "status: active"; then
     ufw default deny incoming >/dev/null; ufw default allow outgoing >/dev/null; ufw --force enable >/dev/null
   fi
-  # Безопасная проверка существующих правил (поиск по целому слову -w)
   ufw status | grep -qw '22/tcp' || ufw allow 22/tcp comment SSH >/dev/null
   ufw status | grep -qw '8123/tcp' || ufw allow 8123/tcp comment HA >/dev/null
   msg_ok "UFW настроен (22, 8123 открыты)"
