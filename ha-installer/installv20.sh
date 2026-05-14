@@ -3926,7 +3926,7 @@ step_security() {
 # CONFIGURE: Изменение параметров системы
 # ============================================================================
 
-# configure_: Настройка имени хоста и mDNS
+# Настройка имени хоста и mDNS
 configure_hostname_avahi() {
   [ "$OPT_HOSTNAME" = true ] && {
     if [ ! -f "${BACKUP_DIR}/hostname.bak" ]; then
@@ -3940,7 +3940,7 @@ configure_hostname_avahi() {
   msg_ok "mDNS (avahi)"
 }
 
-# configure_: Настройка заданий cron
+# Настройка заданий cron
 configure_cron() {
   {
     echo "# HA Installer v${SCRIPT_VERSION}"
@@ -4437,7 +4437,7 @@ wait_ha_config_init() {
 # CONFIGURE: Настройка среды для HACS
 # ============================================================================
 
-# configure_: Исправление DNS внутри контейнера при необходимости
+# Исправление DNS внутри контейнера при необходимости
 configure_docker_dns() {
   if ! docker exec homeassistant wget -q --spider --timeout=5 https://github.com 2>/dev/null && \
      ! docker exec homeassistant python3 -c "import urllib.request; urllib.request.urlopen('https://github.com', timeout=5)" 2>/dev/null; then
@@ -4468,7 +4468,7 @@ configure_docker_dns() {
 # INSTALL: Установка HACS
 # ============================================================================
 
-# install_: Попытка установки HACS (3 способа с таймаутами)
+# Попытка установки HACS (3 способа с таймаутами)
 install_hacs() {
   msg_action "Установка HACS..."
   local hacs_ok=false
@@ -4675,7 +4675,7 @@ do_check() {
 # APPLY: Разовые фиксы среды (Rescue Mode)
 # ============================================================================
 
-# apply_: Проверка и фикс файловой системы
+# Проверка и фикс файловой системы
 apply_rescue_filesystem() {
   msg_action "[1/8] Файловая система..."
   if ! touch /tmp/.ha_rescue_test 2>/dev/null; then
@@ -4695,7 +4695,7 @@ apply_rescue_filesystem() {
   msg_ok "ФС: OK (rw)"; return 0
 }
 
-# apply_: Проверка и очистка места на диске
+# Проверка и очистка места на диске
 apply_rescue_disk_space() {
   msg_action "[2/8] Место на диске..."
   local avail; avail=$(df -m / | awk 'NR==2{print $4}')
@@ -4712,7 +4712,7 @@ apply_rescue_disk_space() {
   msg_ok "Диск: ${avail}МБ свободно"; return 0
 }
 
-# apply_: Проверка и восстановление сети
+# Проверка и восстановление сети
 apply_rescue_network() {
   msg_action "[3/8] Сеть..."
   local ip; ip=$(hostname -I 2>/dev/null | awk '{print $1}')
@@ -4735,7 +4735,7 @@ apply_rescue_network() {
   msg_ok "Сеть: ${ip}"; return 0
 }
 
-# apply_: Проверка и фикс DNS
+# Проверка и фикс DNS
 apply_rescue_dns() {
   msg_action "[4/8] DNS..."
   if ! ping -c1 -W3 github.com &>/dev/null; then
@@ -4756,7 +4756,7 @@ apply_rescue_dns() {
   msg_ok "DNS: OK"; return 0
 }
 
-# apply_: Проверка и перезапуск Docker
+# Проверка и перезапуск Docker
 apply_rescue_docker() {
   msg_action "[5/8] Docker..."
   if command -v docker &>/dev/null; then
@@ -4772,7 +4772,7 @@ apply_rescue_docker() {
   msg_error "Docker не установлен"; return 1
 }
 
-# apply_: Проверка и перезапуск Supervisor
+# Проверка и перезапуск Supervisor
 apply_rescue_supervisor() {
   msg_action "[6/8] Supervisor..."
   if systemctl list-unit-files hassio-supervisor.service &>/dev/null; then
@@ -4788,7 +4788,7 @@ apply_rescue_supervisor() {
   msg_warn "Supervisor не установлен"; return 0
 }
 
-# apply_: Проверка и запуск контейнера HA Core
+# Проверка и запуск контейнера HA Core
 apply_rescue_ha_core() {
   msg_action "[7/8] HA Core..."
   if command -v docker &>/dev/null && docker info &>/dev/null; then
@@ -4814,7 +4814,7 @@ apply_rescue_ha_core() {
   return 1
 }
 
-# apply_: Проверка AppArmor
+# Проверка AppArmor
 apply_rescue_apparmor() {
   msg_action "[8/8] AppArmor..."
   local aa; aa=$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null) || aa="N"
@@ -4977,7 +4977,7 @@ do_status() {
 # APPLY: Откат среды и удаление файлов (Uninstall)
 # ============================================================================
 
-# apply_: Остановка и удаление служб HA
+# Остановка и удаление служб HA
 apply_ha_services_stop() {
   msg_action "Остановка сервисов..."
   systemctl stop hassio-supervisor hassio-apparmor 2>/dev/null || true
@@ -4991,7 +4991,7 @@ apply_ha_services_stop() {
   msg_ok "Сервисы HA остановлены и удалены"
 }
 
-# apply_: Очистка контейнеров, образов и томов Docker
+# Очистка контейнеров, образов и томов Docker
 apply_ha_docker_cleanup() {
   if ! command -v docker &>/dev/null; then return 0; fi
   msg_action "Удаление компонентов Docker HA..."
@@ -5022,14 +5022,14 @@ apply_ha_docker_cleanup() {
   msg_ok "Компоненты Docker HA удалены"
 }
 
-# apply_: Удаление deb-пакетов
+# Удаление deb-пакетов
 apply_ha_packages_purge() {
   msg_action "Удаление пакетов HA..."
   dpkg --purge homeassistant-supervised os-agent 2>/dev/null || true
   msg_ok "Пакеты HA удалены"
 }
 
-# apply_: Удаление скриптов и конфигов установщика
+# Удаление скриптов и конфигов установщика
 apply_ha_files_cleanup() {
   msg_action "Удаление скриптов и конфигов..."
   rm -f /usr/local/bin/ha-notify /usr/local/bin/ha-watchdog /usr/local/bin/ha-cleanup \
@@ -5058,7 +5058,7 @@ apply_ha_files_cleanup() {
   msg_ok "Файлы и конфиги очищены"
 }
 
-# apply_: Удаление Tailscale и Cloudflared
+# Удаление Tailscale и Cloudflared
 apply_vpn_cleanup() {
   if command -v tailscale &>/dev/null; then
     tailscale down >/dev/null 2>&1 || true; apt-get purge -y tailscale >/dev/null 2>&1 || true
@@ -5073,7 +5073,7 @@ apply_vpn_cleanup() {
   fi
 }
 
-# apply_: Полное удаление Docker CE (только для Full Mode)
+# Полное удаление Docker CE (только для Full Mode)
 apply_docker_ce_purge() {
   msg_action "Удаление Docker CE..."
   systemctl stop docker docker.socket containerd 2>/dev/null || true
@@ -5085,7 +5085,7 @@ apply_docker_ce_purge() {
   msg_ok "Docker CE удалён"
 }
 
-# apply_: Очистка AppArmor из загрузчика (только для Full Mode)
+# Очистка AppArmor из загрузчика (только для Full Mode)
 apply_bootloader_apparmor_restore() {
   msg_action "Очистка AppArmor из загрузчика..."
   detect_boot_dir
@@ -5107,7 +5107,7 @@ apply_bootloader_apparmor_restore() {
 # CONFIGURE: Восстановление состояния среды (Uninstall)
 # ============================================================================
 
-# configure_: Восстановление сети (сложная логика для Full Mode)
+# Восстановление сети (сложная логика для Full Mode)
 configure_network_restore() {
   msg_action "Восстановление сети..."
   local iface=""; iface=$(ip -o link show 2>/dev/null | awk -F': ' '!/lo/{print $2; exit}' | cut -d'@' -f1)
