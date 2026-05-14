@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 20.4
+# Version: 20.5
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="20.4"
+readonly SCRIPT_VERSION="20.5"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -2887,10 +2887,6 @@ step_install_deps() {
     local pkgs=(apparmor avahi-daemon bluez ca-certificates cifs-utils curl dbus gnupg jq
     libglib2.0-bin nfs-common systemd-timesyncd udisks2 usbutils wget qrencode)
 
-  # network-manager устанавливается отдельно с защитой от обрыва сети
-  local nm_needed=false
-  is_pkg_installed network-manager || nm_needed=true
-
   for p in lsb-release systemd-resolved systemd-journal-remote; do
     pkg_available "$p" && pkgs+=("$p")
   done
@@ -2992,48 +2988,6 @@ step_install_deps() {
       else
         msg_ok "Установлено: ${total}"
       fi
-    fi
-  fi
-
-  # Установка network-manager отдельно с предотвращением автозапуска
-  if [ "$nm_needed" = true ]; then
-    msg_action "Установка network-manager (без автозапуска)..."
-
-    # Запретить автозапуск NM сразу после установки
-    mkdir -p /usr/sbin
-    if [ ! -f /usr/sbin/policy-rc.d ]; then
-      cat > /usr/sbin/policy-rc.d << 'RCEOF'
-#!/bin/sh
-# Temporary: prevent services from starting during install
-exit 101
-RCEOF
-      chmod +x /usr/sbin/policy-rc.d
-      local policy_created=true
-    fi
-
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        -o Dpkg::Options::="--force-confold" \
-        network-manager </dev/null >/dev/null 2>&1; then
-      msg_ok "network-manager установлен"
-    else
-      msg_warn "network-manager не удалось установить"
-    fi
-
-    # Убрать блокировку автозапуска
-    if [ "${policy_created:-false}" = true ]; then
-      rm -f /usr/sbin/policy-rc.d
-    fi
-
-    # Остановить NM если он всё-таки запустился (настроим на шаге network)
-    systemctl stop NetworkManager 2>/dev/null || true
-    msg_dim "NetworkManager будет настроен на шаге СЕТЬ"
-    # Защита DNS — systemd-resolved мог сломать resolv.conf
-    if ! ping -c1 -W3 github.com &>/dev/null && ping -c1 -W2 8.8.8.8 &>/dev/null; then
-      msg_warn "DNS сломался при установке — исправление..."
-      rm -f /etc/resolv.conf 2>/dev/null
-      echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" > /etc/resolv.conf
-      sleep 2
-      ping -c1 -W3 github.com &>/dev/null && msg_ok "DNS восстановлен" || msg_warn "DNS не работает"
     fi
   fi
 
