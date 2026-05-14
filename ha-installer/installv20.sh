@@ -3831,36 +3831,41 @@ step_install_ha() {
 }
 
 # ============================================================================
-# ШАГ: БЕЗОПАСНОСТЬ
+# INSTALL: Установка пакетов безопасности
 # ============================================================================
-step_security() {
-  local sid="sec"; is_done "$sid" && return 0
-  header "[${CURRENT_STEP_NUM}/${TOTAL_STEPS}] БЕЗОПАСНОСТЬ"
-  local any=false
 
-  if [ "$OPT_UFW" = true ]; then
-    any=true
+# Установка fail2ban
+install_fail2ban() {
+  if ! is_pkg_installed fail2ban; then
+    apt_safe install -y fail2ban >/dev/null || { msg_warn "fail2ban не установлен"; return 1; }
+  fi
+}
 
-    # 1. Базовая настройка UFW (Атомарная функция)
-    # Устанавливает UFW, включает, открывает порты 22 и 8123 (если их еще нет).
-    # Не делает reset, чтобы не сломать правила, добавленные пользователем ранее.
-    configure_ufw_safe
+# ============================================================================
+# CONFIGURE: Настройка параметров работающих сервисов
+# ============================================================================
 
-    # 2. Дополнительные порты для HA (оставляем тут, так как они специфичны)
-    ufw status | grep -qw '4357/tcp' || ufw allow 4357/tcp comment ESPHome >/dev/null 2>&1
-    ufw status | grep -qw '5353/udp' || ufw allow 5353/udp comment mDNS >/dev/null 2>&1
-    ufw status | grep -qw '5683/udp' || ufw allow 5683/udp comment HomeKit >/dev/null 2>&1
+# Открытие специфичных портов для HA в UFW
+configure_ufw_ha_ports() {
+  ufw status | grep -qw '4357/tcp' || ufw allow 4357/tcp comment ESPHome >/dev/null 2>&1
+  ufw status | grep -qw '5353/udp' || ufw allow 5353/udp comment mDNS >/dev/null 2>&1
+  ufw status | grep -qw '5683/udp' || ufw allow 5683/udp comment HomeKit >/dev/null 2>&1
+  msg_ok "Порты HA (ESPHome, mDNS, HomeKit) открыты"
+}
 
-    # 3. Критически важный фикс Docker + UFW (ОСТАВЛЯЕМ СТАРЫЙ КОД)
-    # Этот блок НЕ вынесен в атомарную функцию, так как он модифицирует
-    # /etc/ufw/after.rules через sed. Это специфичная логика для HA Supervised,
-    # и мы не хотим, чтобы меню модулей случайно ломало файрвол пользователя.
-    if ! grep -q "# BEGIN HA-INSTALLER DOCKER-USER" /etc/ufw/after.rules 2>/dev/null; then
-      local iok=true
-      command -v iptables &>/dev/null && iptables --version 2>/dev/null | grep -q legacy && iok=false
-      if $iok; then
-        # Вставляем правила ДО последнего COMMIT в таблице *filter.
-        sed -i '$ s/^COMMIT/\
+# ============================================================================
+# SETUP: Создание файлов конфигурации безопасности
+# ============================================================================
+
+# Инъекция правил DOCKER-USER в /etc/ufw/after.rules
+setup_ufw_docker_rules() {
+  if ! grep -q "# BEGIN HA-INSTALLER DOCKER-USER" /etc/ufw/after.rules 2>/dev/null; then
+    local iok=true
+    command -v iptables &>/dev/null && iptables --version 2>/dev/null | grep -q legacy && iok=false
+    
+    if $iok; then
+      # Вставляем правила ДО последнего COMMIT в таблице *filter.
+      sed -i '$ s/^COMMIT/\
 ### BEGIN HA-INSTALLER DOCKER-USER RULES ###\
 :DOCKER-USER - [0:0]\
 -A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN\
@@ -3872,46 +3877,76 @@ step_security() {
 \
 COMMIT/' /etc/ufw/after.rules
 
-        ufw reload >/dev/null 2>&1
-        msg_ok "DOCKER-USER правила"
-      else
-        msg_warn "DOCKER-USER пропущен (legacy iptables)"
-      fi
-    fi
-
-    # 4. Fail2Ban
-    apt_safe install -y fail2ban >/dev/null || true
-    if is_trixie || [ ! -f /var/log/auth.log ]; then
-      printf '[sshd]\nenabled=true\nport=ssh\nfilter=sshd\nbackend=systemd\nmaxretry=5\nbantime=3600\nfindtime=600\n' \
-        > /etc/fail2ban/jail.local
+      ufw reload >/dev/null 2>&1
+      msg_ok "DOCKER-USER правила (изоляция Docker)"
     else
-      printf '[sshd]\nenabled=true\nport=ssh\nfilter=sshd\nlogpath=/var/log/auth.log\nbackend=auto\nmaxretry=5\nbantime=3600\nfindtime=600\n' \
-        > /etc/fail2ban/jail.local
+      msg_warn "DOCKER-USER пропущен (обнаружен legacy iptables)"
     fi
-    systemctl enable fail2ban 2>/dev/null || true
-    systemctl restart fail2ban 2>/dev/null || true
-    msg_ok "Fail2Ban"
   fi
+}
 
-  # 5. SSH Hardening (Атомарная функция)
-  if [ "$OPT_SSH_HARDENING" = true ]; then
-    any=true
-    apply_ssh_hardening
+# Создание конфига /etc/fail2ban/jail.local
+setup_fail2ban() {
+  if is_trixie || [ ! -f /var/log/auth.log ]; then
+    printf '[sshd]\nenabled=true\nport=ssh\nfilter=sshd\nbackend=systemd\nmaxretry=5\nbantime=3600\nfindtime=600\n' \
+      > /etc/fail2ban/jail.local
+  else
+    printf '[sshd]\nenabled=true\nport=ssh\nfilter=sshd\nlogpath=/var/log/auth.log\nbackend=auto\nmaxretry=5\nbantime=3600\nfindtime=600\n' \
+      > /etc/fail2ban/jail.local
   fi
+  systemctl enable fail2ban 2>/dev/null || true
+  systemctl restart fail2ban 2>/dev/null || true
+  msg_ok "Fail2Ban настроен"
+}
 
-  # 6. Автообновления системы (Оставляем тут)
-  if [ "$OPT_AUTOUPDATE" = true ]; then
-    any=true
-    cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'U'
+# Создание конфигов автообновлений APT
+setup_auto_updates() {
+  cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'U'
 Unattended-Upgrade::Allowed-Origins { "${distro_id}:${distro_codename}-security"; };
 Unattended-Upgrade::AutoFixInterruptedDpkg "true";
 Unattended-Upgrade::MinimalSteps "true";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
 Unattended-Upgrade::Automatic-Reboot "false";
 U
-    printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\nAPT::Periodic::AutocleanInterval "7";\n' \
-      > /etc/apt/apt.conf.d/20auto-upgrades
-    msg_ok "Автообновления"
+  printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\nAPT::Periodic::AutocleanInterval "7";\n' \
+    > /etc/apt/apt.conf.d/20auto-upgrades
+  msg_ok "Автообновления безопасности"
+}
+
+# ============================================================================
+# ШАГ: БЕЗОПАСНОСТЬ
+# ============================================================================
+step_security() {
+  local sid="sec"; is_done "$sid" && return 0
+  header "[${CURRENT_STEP_NUM}/${TOTAL_STEPS}] БЕЗОПАСНОСТЬ"
+  local any=false
+
+  if [ "$OPT_UFW" = true ]; then
+    any=true
+
+    # 1. Базовая настройка UFW (включение, порты 22 и 8123) - уже существующая функция
+    configure_ufw_safe
+
+    # 2. Дополнительные порты для HA
+    configure_ufw_ha_ports
+
+    # 3. Изоляция Docker (чтобы контейнеры не обошли UFW)
+    setup_ufw_docker_rules
+
+    # 4. Fail2Ban
+    install_fail2ban && setup_fail2ban
+  fi
+
+  # 5. SSH Hardening (уже существующая функция)
+  if [ "$OPT_SSH_HARDENING" = true ]; then
+    any=true
+    apply_ssh_hardening
+  fi
+
+  # 6. Автообновления системы
+  if [ "$OPT_AUTOUPDATE" = true ]; then
+    any=true
+    setup_auto_updates
   fi
 
   $any || msg_warn "Пропущено"
