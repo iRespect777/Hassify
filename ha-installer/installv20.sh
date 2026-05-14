@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 20.2
+# Version: 20.3
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="20.2"
+readonly SCRIPT_VERSION="20.3"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -3954,67 +3954,74 @@ step_security() {
 }
 
 # ============================================================================
-# ШАГ: УТИЛИТЫ
+# CONFIGURE: Изменение параметров системы
 # ============================================================================
-step_extras() {
-  local sid="extras"; is_done "$sid" && return 0
-  header "[${CURRENT_STEP_NUM}/${TOTAL_STEPS}] УТИЛИТЫ"
 
-      [ "$OPT_HOSTNAME" = true ] && {
-        if [ ! -f "${BACKUP_DIR}/hostname.bak" ]; then
-            hostname > "${BACKUP_DIR}/hostname.bak" 2>/dev/null || true
-        fi
-        hostnamectl set-hostname homeassistant 2>/dev/null || true
+# configure_: Настройка имени хоста и mDNS
+configure_hostname_avahi() {
+  [ "$OPT_HOSTNAME" = true ] && {
+    if [ ! -f "${BACKUP_DIR}/hostname.bak" ]; then
+      hostname > "${BACKUP_DIR}/hostname.bak" 2>/dev/null || true
+    fi
+    hostnamectl set-hostname homeassistant 2>/dev/null || true
     msg_ok "Имя хоста: homeassistant"
   }
-
   systemctl enable avahi-daemon >/dev/null 2>&1 || true
   systemctl start avahi-daemon >/dev/null 2>&1 || true
   msg_ok "mDNS (avahi)"
+}
 
-  # --- ha-notify ---
-  # Токены сохраняем в отдельные защищённые файлы.
-  # Это исключает инъекцию через спецсимволы в токене
-  # и не хранит секреты в открытом виде в теле скрипта.
-  # Используем HA_INSTALLER_DIR который уже создан в setup_dirs().
+# configure_: Настройка заданий cron
+configure_cron() {
+  {
+    echo "# HA Installer v${SCRIPT_VERSION}"
+    [ "$OPT_WATCHDOG" = true ] && printf '*/5 * * * * root /usr/local/bin/ha-watchdog >/dev/null 2>&1\n*/10 * * * * root /usr/local/bin/ha-net-recovery >/dev/null 2>&1\n30 3 * * * root /usr/local/bin/ha-cleanup >/dev/null 2>&1\n'
+    [ "$OPT_THERMAL" = true ] && echo '*/5 * * * * root /usr/local/bin/ha-thermal >/dev/null 2>&1'
+    [ "$OPT_BACKUP" = true ] && echo '0 4 * * 0 root /usr/local/bin/ha-backup >/dev/null 2>&1'
+    [ "$OPT_REMOTE_BACKUP" = true ] && echo '30 4 * * 0 root /usr/local/bin/ha-backup-remote >/dev/null 2>&1'
+    [ "$OPT_MONITORING" = true ] && echo '* * * * * root /usr/local/bin/ha-metrics >/dev/null 2>&1'
+    echo '0 9 * * 1 root /usr/local/bin/ha-weekly-report >/dev/null 2>&1'
+  } > /etc/cron.d/ha-tools
+  chmod 644 /etc/cron.d/ha-tools
+  msg_ok "Задания cron"
+}
+
+# ============================================================================
+# SETUP: Создание файлов и утилит
+# ============================================================================
+
+# setup_: Сохранение токенов уведомлений в защищенные файлы
+setup_ha_secrets() {
   local secrets_dir="${HA_INSTALLER_DIR}/secrets"
   mkdir -p "$secrets_dir"
   chmod 700 "$secrets_dir"
-  # printf '%s' не добавляет перевод строки в отличие от echo
   printf '%s' "${TG_TOKEN}"        > "${secrets_dir}/tg_token"
   printf '%s' "${TG_CHAT}"         > "${secrets_dir}/tg_chat"
   printf '%s' "${OPT_WEBHOOK_URL}" > "${secrets_dir}/webhook_url"
-  
-  chmod 600 "${secrets_dir}/tg_token" \
-            "${secrets_dir}/tg_chat" \
-            "${secrets_dir}/webhook_url" 2>/dev/null
+  chmod 600 "${secrets_dir}/tg_token" "${secrets_dir}/tg_chat" "${secrets_dir}/webhook_url" 2>/dev/null
+}
 
-  # Heredoc с кавычками << 'NTEOF' означает что bash НЕ делает
-  # никаких подстановок внутри — всё записывается буквально.
-  # Токены скрипт читает сам из файлов при каждом вызове.
+# setup_: Генерация скрипта ha-notify
+setup_script_notify() {
   cat > /usr/local/bin/ha-notify << 'NTEOF'
 #!/bin/bash
 MSG="${1:-}"
 [ -z "$MSG" ] && exit 0
 
-# Защита от частых уведомлений — не чаще одного раза в 30 секунд
 RF="/tmp/.ha_notify_rate"
 NOW=$(date +%s)
 LAST=$(cat "$RF" 2>/dev/null || echo 0)
 [ $((NOW - LAST)) -lt 30 ] && exit 0
 echo "$NOW" > "$RF"
 
-# Читаем токены из защищённых файлов.
-# Путь совпадает с HA_INSTALLER_DIR/secrets из установщика.
 SECRETS="/var/lib/ha-installer/secrets"
 TG_TOKEN=$(cat "${SECRETS}/tg_token"    2>/dev/null || echo "")
 TG_CHAT=$(cat  "${SECRETS}/tg_chat"     2>/dev/null || echo "")
-WEBHOOK=$(cat  "${SECRETS}/webhook_url" 2>/dev/null || echo "")
+WEBHOOK=$(cat  "${SECRETS}/webhook_url"  2>/dev/null || echo "")
 
 HOST=$(hostname 2>/dev/null || echo "ha-box")
 FULL_MSG="HA (${HOST}): ${MSG}"
 
-# --- Telegram ---
 if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
   curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
     --data-urlencode "chat_id=${TG_CHAT}" \
@@ -4022,73 +4029,36 @@ if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
     >/dev/null 2>&1
 fi
 
-# --- Webhook (ntfy / Discord / Slack / Gotify / custom) ---
 if [ -n "$WEBHOOK" ]; then
   case "$WEBHOOK" in
-
-    # ntfy.sh ожидает plain text в body запроса.
-    # JSON она не парсит — отображает как есть.
-    # Заголовки Title и Tags добавляют красивое оформление.
     *ntfy.sh/*)
-      curl -s -X POST "$WEBHOOK" \
-        -H "Title: Home Assistant" \
-        -H "Priority: default" \
-        -H "Tags: house" \
-        -d "$FULL_MSG" \
-        >/dev/null 2>&1 || true
-      ;;
-
-    # Discord ожидает JSON с полем "content"
+      curl -s -X POST "$WEBHOOK" -H "Title: Home Assistant" -H "Priority: default" -H "Tags: house" -d "$FULL_MSG" >/dev/null 2>&1 || true ;;
     *discord.com/api/webhooks/*|*discordapp.com/api/webhooks/*)
       ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
-      curl -s -X POST "$WEBHOOK" \
-        -H "Content-Type: application/json" \
-        -d "{\"content\":\"${ESCAPED}\"}" \
-        >/dev/null 2>&1 || true
-      ;;
-
-    # Slack ожидает JSON с полем "text"
+      curl -s -X POST "$WEBHOOK" -H "Content-Type: application/json" -d "{\"content\":\"${ESCAPED}\"}" >/dev/null 2>&1 || true ;;
     *hooks.slack.com/*)
       ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
-      curl -s -X POST "$WEBHOOK" \
-        -H "Content-Type: application/json" \
-        -d "{\"text\":\"${ESCAPED}\"}" \
-        >/dev/null 2>&1 || true
-      ;;
-
-    # Gotify ожидает JSON с полями "title" и "message"
+      curl -s -X POST "$WEBHOOK" -H "Content-Type: application/json" -d "{\"text\":\"${ESCAPED}\"}" >/dev/null 2>&1 || true ;;
     */message*|*gotify*)
       ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
-      curl -s -X POST "$WEBHOOK" \
-        -H "Content-Type: application/json" \
-        -d "{\"title\":\"Home Assistant\",\"message\":\"${ESCAPED}\",\"priority\":5}" \
-        >/dev/null 2>&1 || true
-      ;;
-
-    # Всё остальное — сначала пробуем plain text.
-    # Если сервер не принял (не 2xx) — пробуем JSON.
+      curl -s -X POST "$WEBHOOK" -H "Content-Type: application/json" -d "{\"title\":\"Home Assistant\",\"message\":\"${ESCAPED}\",\"priority\":5}" >/dev/null 2>&1 || true ;;
     *)
-      RC=$(curl -s -o /dev/null -w "%{http_code}" \
-        -X POST "$WEBHOOK" \
-        -d "$FULL_MSG" \
-        2>/dev/null) || RC="000"
+      RC=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$WEBHOOK" -d "$FULL_MSG" 2>/dev/null) || RC="000"
       RC="${RC:-000}"
       if [[ ! "$RC" =~ ^2 ]]; then
         ESCAPED=$(printf '%s' "$FULL_MSG" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
-        curl -s -X POST "$WEBHOOK" \
-          -H "Content-Type: application/json" \
-          -d "{\"text\":\"${ESCAPED}\",\"message\":\"${ESCAPED}\"}" \
-          >/dev/null 2>&1 || true
-      fi
-      ;;
+        curl -s -X POST "$WEBHOOK" -H "Content-Type: application/json" -d "{\"text\":\"${ESCAPED}\",\"message\":\"${ESCAPED}\"}" >/dev/null 2>&1 || true
+      fi ;;
   esac
 fi
 NTEOF
   chmod 700 /usr/local/bin/ha-notify
+  msg_ok "Скрипт: ha-notify"
+}
 
-  # --- Watchdog ---
-  if [ "$OPT_WATCHDOG" = true ]; then
-    cat > /usr/local/bin/ha-watchdog << 'S'
+# setup_: Генерация скриптов Watchdog, Cleanup, Net-recovery
+setup_script_watchdog() {
+  cat > /usr/local/bin/ha-watchdog << 'S'
 #!/bin/bash
 GF="/tmp/.ha_just_installed"
 [ -f "$GF" ] && { [ $(($(date +%s)-$(stat -c %Y "$GF" 2>/dev/null||echo 0))) -lt 1200 ] && exit 0; rm -f "$GF"; }
@@ -4106,7 +4076,8 @@ if [ "$c" = "000" ]; then
 else fails=0; backoff=5; fi
 echo "${fails}|${last_restart}|${backoff}" > "$SF"
 S
-    cat > /usr/local/bin/ha-cleanup << 'S'
+
+  cat > /usr/local/bin/ha-cleanup << 'S'
 #!/bin/bash
 fm=$(df -m / | awk 'NR==2{print $4}')
 [ "$fm" -lt 1500 ] && {
@@ -4116,7 +4087,8 @@ fm=$(df -m / | awk 'NR==2{print $4}')
   /usr/local/bin/ha-notify "Очистка: ${fm}МБ -> $(df -m / | awk 'NR==2{print $4}')МБ"
 }
 S
-    cat > /usr/local/bin/ha-net-recovery << 'S'
+
+  cat > /usr/local/bin/ha-net-recovery << 'S'
 #!/bin/bash
 GW=$(ip route 2>/dev/null | awk '/default/{print $3}' | head -1)
 [ -z "$GW" ] && GW=8.8.8.8
@@ -4127,24 +4099,26 @@ ping -c2 -W3 8.8.8.8 >/dev/null 2>&1 \
   && /usr/local/bin/ha-notify "Сеть восстановлена" \
   || /usr/local/bin/ha-notify "Сеть НЕ восстановлена"
 S
-    chmod +x /usr/local/bin/ha-watchdog /usr/local/bin/ha-cleanup /usr/local/bin/ha-net-recovery
-    msg_ok "Watchdog (экспон. откат)"
-  fi
 
-  # --- Термомонитор ---
-  if [ "$OPT_THERMAL" = true ]; then
-    cat > /usr/local/bin/ha-thermal << 'S'
+  chmod +x /usr/local/bin/ha-watchdog /usr/local/bin/ha-cleanup /usr/local/bin/ha-net-recovery
+  msg_ok "Скрипты: Watchdog (экспон. откат)"
+}
+
+# setup_: Генерация скрипта термомонитора
+setup_script_thermal() {
+  cat > /usr/local/bin/ha-thermal << 'S'
 #!/bin/bash
 [ ! -f /sys/class/thermal/thermal_zone0/temp ] && exit 0
 t=$(($(cat /sys/class/thermal/thermal_zone0/temp)/1000))
 [ "$t" -ge 80 ] && /usr/local/bin/ha-notify "КРИТИЧ. ТЕМП: ${t}C!"
 [ "$t" -ge 70 ] && [ "$t" -lt 80 ] && /usr/local/bin/ha-notify "ВЫСОКАЯ ТЕМП: ${t}C"
 S
-    chmod +x /usr/local/bin/ha-thermal
-    msg_ok "Термомонитор"
-  fi
+  chmod +x /usr/local/bin/ha-thermal
+  msg_ok "Скрипт: Термомонитор"
+}
 
-  # --- ha-health ---
+# setup_: Генерация скриптов здоровья и еженедельного отчета
+setup_script_health() {
   cat > /usr/local/bin/ha-health << 'S'
 #!/bin/bash
 echo "===== Здоровье HA ($(date)) ====="
@@ -4164,10 +4138,7 @@ docker system df 2>/dev/null || echo " н/д"
 printf " %-16s %s\n" "HA:" "$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:8123 2>/dev/null || echo 000)"
 echo "========================="
 S
-  chmod +x /usr/local/bin/ha-health
-  msg_ok "ha-health"
 
-  # --- Еженедельный отчёт ---
   cat > /usr/local/bin/ha-weekly-report << 'S'
 #!/bin/bash
 ha_code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:8123 2>/dev/null || echo 000)
@@ -4187,45 +4158,36 @@ R="${R}"$'\n'"Время работы: ${uptime_info}"
 R="${R}"$'\n'"Контейнеры: ${containers}"
 /usr/local/bin/ha-notify "$R"
 S
-  chmod +x /usr/local/bin/ha-weekly-report
-  msg_ok "Еженедельный отчёт"
 
-    # --- Бэкап ---
-  if [ "$OPT_BACKUP" = true ]; then
-    mkdir -p "$HA_BACKUP_DIR"
-    cat > /usr/local/bin/ha-backup << BEOF
+  chmod +x /usr/local/bin/ha-health /usr/local/bin/ha-weekly-report
+  msg_ok "Скрипты: ha-health, Еженедельный отчёт"
+}
+
+# setup_: Генерация скриптов бэкапа (локальный, восстановление, удаленный)
+setup_script_backups() {
+  mkdir -p "$HA_BACKUP_DIR"
+
+  cat > /usr/local/bin/ha-backup << BEOF
 #!/bin/bash
 set -f
 BD="${HA_BACKUP_DIR}"; KD=30
 TS=\$(date +%Y%m%d_%H%M%S); mkdir -p "\$BD"
 
 if command -v ha &>/dev/null; then
-  # ==========================================
-  # МЕТОД 1: Полный снапшот через HA CLI
-  # ==========================================
   echo "Создание полного бэкапа через HA CLI..."
-  
-  # Используем флаг --name. stdout прячем (чтобы не спамить JSON), stderr оставляем (там прогресс-бар).
   ha backups new --name "AutoBackup_\${TS}" >/dev/null
-  
   if [ \$? -eq 0 ]; then
-    echo "Полный бэкап успешно создан средствами HA!"
+    echo "Полный бэкап успешно создан!"
     /usr/local/bin/ha-notify "Полный бэкап CLI завершен: AutoBackup_\${TS}"
   else
-    echo "=========================================="
     echo "ОШИБКА: Не удалось создать бэкап через HA CLI!"
-    echo "Проверьте логи: journalctl -u hassio-supervisor"
-    echo "=========================================="
     /usr/local/bin/ha-notify "Бэкап CLI: ОШИБКА"
     exit 1
   fi
-
-  # Очистка старых бэкапов (оставляем 5 последних)
   echo "Очистка старых снапшотов (оставляем 5 последних)..."
   SLUGS=\$(ha backups list 2>/dev/null | jq -r '.data.backups | sort_by(.date) | .[].slug' 2>/dev/null)
   COUNT=\$(echo "\$SLUGS" | wc -l)
   KEEP=5
-  
   if [ "\$COUNT" -gt "\$KEEP" ]; then
     DELETE_COUNT=\$((COUNT - KEEP))
     echo "\$SLUGS" | head -n \$DELETE_COUNT | while read -r del_slug; do
@@ -4233,27 +4195,11 @@ if command -v ha &>/dev/null; then
       echo "Удален старый снапшот: \${del_slug}"
     done
   fi
-
 else
-  # ==========================================
-  # МЕТОД 2: Быстрый бэкап папки конфига (TAR)
-  # ==========================================
   echo "Утилита 'ha' не найдена. Используется быстрый бэкап (только конфиг Core)."
-  echo ""
-  
-  # Динамически определяем реальный путь к конфигурации HA через Docker
   CONFIG_DIR=\$(docker inspect homeassistant --format '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
-  if [ -z "\$CONFIG_DIR" ]; then
-      CONFIG_DIR="/usr/share/hassio/homeassistant"
-  fi
-  
-  if [ ! -d "\$CONFIG_DIR" ]; then
-    echo "=========================================="
-    echo "ОШИБКА: Каталог конфигурации HA не найден (\$CONFIG_DIR)."
-    echo "Убедитесь, что Home Assistant запущен."
-    echo "=========================================="
-    exit 1
-  fi
+  if [ -z "\$CONFIG_DIR" ]; then CONFIG_DIR="/usr/share/hassio/homeassistant"; fi
+  if [ ! -d "\$CONFIG_DIR" ]; then echo "ОШИБКА: Каталог конфигурации HA не найден (\$CONFIG_DIR)."; exit 1; fi
   
   EX="--exclude=*.db --exclude=*.db-shm --exclude=*.db-wal --exclude=home-assistant_v2.db* --exclude=tts --exclude=deps --exclude=__pycache__"
   CONFIG_PARENT=\$(dirname "\$CONFIG_DIR")
@@ -4264,13 +4210,7 @@ else
   else
     tar czf "\${BD}/ha_config_\${TS}.tar.gz" \$EX -C "\$CONFIG_PARENT" "\$CONFIG_NAME"
   fi
-  
-  if [ \$? -ne 0 ]; then
-    echo "=========================================="
-    echo "ОШИБКА при создании tar архива!"
-    echo "=========================================="
-    exit 1
-  fi
+  if [ \$? -ne 0 ]; then echo "ОШИБКА при создании tar архива!"; exit 1; fi
   
   find "\$BD" -name "ha_config_*.tar.gz" -mtime +\$KD -delete 2>/dev/null
   BSIZE=\$(du -sh "\${BD}/ha_config_\${TS}.tar.gz" 2>/dev/null | awk '{print \$1}')
@@ -4279,44 +4219,26 @@ else
 fi
 BEOF
 
-    cat > /usr/local/bin/ha-restore << REOF
+  cat > /usr/local/bin/ha-restore << REOF
 #!/bin/bash
 [ -z "\$BASH_VERSION" ] && { echo "Нужен bash!"; exit 1; }
 
 if command -v ha &>/dev/null; then
-  # ==========================================
-  # МЕТОД 1: Восстановление полного снапшота через HA CLI
-  # ==========================================
   echo "Доступные полные бэкапы (снапшоты) Home Assistant:"
   echo "--------------------------------------------------"
   ha backups list
   echo "--------------------------------------------------"
-  
-  read -p "Введите Slug бэкапа для восстановления (из первой колонки): " SLUG
+  read -p "Введите Slug бэкапа для восстановления: " SLUG
   [ -z "\$SLUG" ] && { echo "Отменено"; exit 1; }
-  
   read -p "Подтвердить восстановление снапшота \$SLUG? (да/yes): " c
   [ "\$c" != "да" ] && [ "\$c" != "yes" ] && exit 0
-  
-  echo "Восстановление... (это может занять несколько минут, HA перезапустится)"
-  if ha backups restore "\$SLUG"; then
-    echo "Восстановление успешно запущено/завершено!"
-  else
-    echo "ОШИБКА восстановления снапшота!"
-    exit 1
-  fi
-
+  echo "Восстановление..."
+  if ha backups restore "\$SLUG"; then echo "Восстановление успешно запущено!"; else echo "ОШИБКА восстановления!"; exit 1; fi
 else
-  # ==========================================
-  # МЕТОД 2: Восстановление TAR (только конфиг Core)
-  # ==========================================
-  echo "Утилита 'ha' не найдена. Восстановление из TAR архива (только конфиг Core)."
+  echo "Утилита 'ha' не найдена. Восстановление из TAR архива."
   BD="${HA_BACKUP_DIR}"
-  
   CONFIG_DIR=\$(docker inspect homeassistant --format '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
-  if [ -z "\$CONFIG_DIR" ]; then
-      CONFIG_DIR="/usr/share/hassio/homeassistant"
-  fi
+  if [ -z "\$CONFIG_DIR" ]; then CONFIG_DIR="/usr/share/hassio/homeassistant"; fi
   CONFIG_PARENT=\$(dirname "\$CONFIG_DIR")
   CONFIG_NAME=\$(basename "\$CONFIG_DIR")
 
@@ -4339,126 +4261,63 @@ else
 fi
 REOF
 
-    chmod +x /usr/local/bin/ha-backup /usr/local/bin/ha-restore
-    msg_ok "Система бэкапов"
-  fi
+  chmod +x /usr/local/bin/ha-backup /usr/local/bin/ha-restore
 
-  # --- Удалённый бэкап ---
   if [ "$OPT_REMOTE_BACKUP" = true ] && [ -n "$REMOTE_BACKUP_TARGET" ]; then
     cat > /usr/local/bin/ha-backup-remote << RBEOF
 #!/bin/bash
 REMOTE="${REMOTE_BACKUP_TARGET}"
 BD="${HA_BACKUP_DIR}"
 
-    # 1. Определяем, какой файл бэкапить (Полный снапшот или TAR)
-    LATEST_FILE=""
+LATEST_FILE=""
+if [ -d "/var/lib/homeassistant/backup" ]; then SNAPSHOT_DIR="/var/lib/homeassistant/backup"
+elif [ -d "/usr/share/hassio/backup" ]; then SNAPSHOT_DIR="/usr/share/hassio/backup"
+else SNAPSHOT_DIR="/usr/share/hassio/backups"; fi
 
-    # Определяем каталог с бэкапами. Зависит от типа установки (Debian pkg vs Docker/OVA)
-    if [ -d "/var/lib/homeassistant/backup" ]; then
-        SNAPSHOT_DIR="/var/lib/homeassistant/backup"
-    elif [ -d "/usr/share/hassio/backup" ]; then
-        SNAPSHOT_DIR="/usr/share/hassio/backup"
-    else
-        SNAPSHOT_DIR="/usr/share/hassio/backups"
-    fi
+if command -v ha &>/dev/null && command -v jq &>/dev/null; then
+  LATEST_SLUG=\$(ha backups list 2>/dev/null | jq -r '.data.backups | sort_by(.date) | reverse | .[0].slug' 2>/dev/null)
+  if [ -n "\$LATEST_SLUG" ]; then [ -f "\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar" ] && LATEST_FILE="\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar"; fi
+fi
+if [ -z "\$LATEST_FILE" ] && [ -d "\$SNAPSHOT_DIR" ]; then LATEST_FILE=\$(ls -1t "\${SNAPSHOT_DIR}"/*.tar 2>/dev/null | head -1); fi
+if [ -z "\$LATEST_FILE" ]; then LATEST_FILE=\$(ls -1t "\$BD"/ha_config_*.tar.gz 2>/dev/null | head -1); fi
 
-    # Способ 1: Пытаемся найти последний полный снапшот через HA CLI (самый точный)
-    if command -v ha &>/dev/null && command -v jq &>/dev/null; then
-      LATEST_SLUG=\$(ha backups list 2>/dev/null | jq -r '.data.backups | sort_by(.date) | reverse | .[0].slug' 2>/dev/null)
-      if [ -n "\$LATEST_SLUG" ]; then
-        [ -f "\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar" ] && LATEST_FILE="\${SNAPSHOT_DIR}/\${LATEST_SLUG}.tar"
-      fi
-    fi
-
-    # Способ 2: Если HA CLI не сработал (часто бывает на TV-box), просто берем самый свежий .tar в папке
-    if [ -z "\$LATEST_FILE" ] && [ -d "\$SNAPSHOT_DIR" ]; then
-      LATEST_FILE=\$(ls -1t "\${SNAPSHOT_DIR}"/*.tar 2>/dev/null | head -1)
-    fi
-
-    # Способ 3: Если полных снапшотов нет вообще, ищем быстрый бэкап (tar.gz), созданный скриптом ha-backup
-    if [ -z "\$LATEST_FILE" ]; then
-      LATEST_FILE=\$(ls -1t "\$BD"/ha_config_*.tar.gz 2>/dev/null | head -1)
-    fi
-
-    if [ -z "\$LATEST_FILE" ] || [ ! -f "\$LATEST_FILE" ]; then
-      echo "Локальные бэкапы не найдены"; exit 1
-    fi
-
+if [ -z "\$LATEST_FILE" ] || [ ! -f "\$LATEST_FILE" ]; then echo "Локальные бэкапы не найдены"; exit 1; fi
 echo "Отправка бэкапа \$(basename "\$LATEST_FILE") в \$REMOTE ..."
 
 case "\$REMOTE" in
   rclone://*)
-    # ==========================================
-    # МЕТОД 1: Облачные диски через rclone
-    # ==========================================
-    if ! command -v rclone &>/dev/null; then
-      echo "ОШИБКА: rclone не установлен"; exit 1
-    fi
-    # Отрезаем префикс rclone:// -> получаем remote:path
+    if ! command -v rclone &>/dev/null; then echo "ОШИБКА: rclone не установлен"; exit 1; fi
     RCLONE_TARGET="\${REMOTE#rclone://}"
-    # Извлекаем имя профиля (например, yandex из yandex:HA_Backups)
     RCLONE_REMOTE="\${RCLONE_TARGET%%:*}"
-    
-    # Проверяем, настроен ли этот профиль в rclone
     if ! rclone listremotes 2>/dev/null | grep -q "^\${RCLONE_REMOTE}:"; then
-      echo "=========================================="
-      echo "ОШИБКА: Профиль rclone '\${RCLONE_REMOTE}' не настроен!"
-      echo "Выполните команду: sudo rclone config"
-      echo "=========================================="
-      /usr/local/bin/ha-notify "Удал. бэкап: rclone НЕ НАСТРОЕН (\$RCLONE_REMOTE)"
-      exit 1
+      echo "ОШИБКА: Профиль rclone '\${RCLONE_REMOTE}' не настроен! Выполните: sudo rclone config"
+      /usr/local/bin/ha-notify "Удал. бэкап: rclone НЕ НАСТРОЕН (\$RCLONE_REMOTE)"; exit 1
     fi
-    
-    # Используем copy (не sync!), чтобы не удалить старые бэкапы в облаке
     rclone copy "\$LATEST_FILE" "\$RCLONE_TARGET" --progress
-    if [ \$? -eq 0 ]; then
-      /usr/local/bin/ha-notify "Удал. бэкап (rclone) -> OK"
-    else
-      /usr/local/bin/ha-notify "Удал. бэкап (rclone) -> ОШИБКА"
-    fi
-    ;;
+    [ \$? -eq 0 ] && /usr/local/bin/ha-notify "Удал. бэкап (rclone) -> OK" || /usr/local/bin/ha-notify "Удал. бэкап (rclone) -> ОШИБКА" ;;
   ssh://*)
-    # ==========================================
-    # МЕТОД 2: Собственный сервер через rsync
-    # ==========================================
     rsync -avz --partial --progress -e "ssh -o StrictHostKeyChecking=no" "\$LATEST_FILE" "\${REMOTE#ssh://}"
-    if [ \$? -eq 0 ]; then
-      /usr/local/bin/ha-notify "Удал. бэкап (SSH rsync) -> OK"
-    else
-      /usr/local/bin/ha-notify "Удал. бэкап (SSH rsync) -> ОШИБКА"
-    fi
-    ;;
+    [ \$? -eq 0 ] && /usr/local/bin/ha-notify "Удал. бэкап (SSH rsync) -> OK" || /usr/local/bin/ha-notify "Удал. бэкап (SSH rsync) -> ОШИБКА" ;;
   *)
-    /usr/local/bin/ha-notify "Удал. бэкап: неизвестный протокол (\$REMOTE)"
-    echo "Ошибка: Используйте префикс ssh:// или rclone://"
-    exit 1
-    ;;
+    /usr/local/bin/ha-notify "Удал. бэкап: неизвестный протокол (\$REMOTE)"; echo "Ошибка: Используйте префикс ssh:// или rclone://"; exit 1 ;;
 esac
 RBEOF
     chmod +x /usr/local/bin/ha-backup-remote
-    msg_ok "Удалённый бэкап"
   fi
 
-  # --- Гарантированная установка rclone (Fallback) ---
-  if [ "$OPT_REMOTE_BACKUP" = true ]; then
-    if ! command -v rclone &>/dev/null; then
-      msg_action "Установка rclone (официальный скрипт)..."
-      curl -fsSL https://rclone.org/install.sh 2>/dev/null | bash >/dev/null 2>&1
-      if command -v rclone &>/dev/null; then
-        msg_ok "rclone установлен"
-      else
-        msg_warn "Не удалось установить rclone автоматически."
-        msg_dim "Установите вручную: curl https://rclone.org/install.sh | sudo bash"
-      fi
-    else
-      msg_ok "rclone: $(rclone version 2>/dev/null | head -1 | awk '{print $2}')"
-    fi
+  # Установка rclone если нужен удаленный бэкап
+  if [ "$OPT_REMOTE_BACKUP" = true ] && ! command -v rclone &>/dev/null; then
+    msg_action "Установка rclone..."
+    curl -fsSL https://rclone.org/install.sh 2>/dev/null | bash >/dev/null 2>&1 && msg_ok "rclone установлен" || msg_warn "Не удалось установить rclone"
   fi
 
-  # --- Мониторинг Prometheus ---
-  if [ "$OPT_MONITORING" = true ]; then
-    mkdir -p "$METRICS_DIR"
-    cat > /usr/local/bin/ha-metrics << 'S'
+  msg_ok "Система бэкапов"
+}
+
+# setup_: Генерация скрипта Prometheus метрик
+setup_script_metrics() {
+  mkdir -p "$METRICS_DIR"
+  cat > /usr/local/bin/ha-metrics << 'S'
 #!/bin/bash
 OUT="/var/lib/prometheus/node-exporter/ha.prom"
 mkdir -p "$(dirname "$OUT")"
@@ -4480,13 +4339,13 @@ mkdir -p "$(dirname "$OUT")"
   echo "ha_disk_free_bytes $(df -B1 / | awk 'NR==2{print $4}')"
 } > "${OUT}.tmp" && mv "${OUT}.tmp" "$OUT"
 S
-    chmod +x /usr/local/bin/ha-metrics
-    msg_ok "Метрики Prometheus"
-  fi
+  chmod +x /usr/local/bin/ha-metrics
+  msg_ok "Скрипт: Метрики Prometheus"
+}
 
-  # --- Восстановление загрузки ---
-  if [ "$OPT_BOOT_RECOVERY" = true ]; then
-    cat > /usr/local/bin/ha-boot-check << 'S'
+# setup_: Генерация скрипта и юнита восстановления загрузки
+setup_script_boot_check() {
+  cat > /usr/local/bin/ha-boot-check << 'S'
 #!/bin/bash
 sleep 30
 dmesg | grep -qi "ext4.*error\|filesystem.*error" && \
@@ -4497,8 +4356,9 @@ systemctl is-active --quiet hassio-supervisor || {
   /usr/local/bin/ha-notify "Supervisor перезапущен после загрузки"
 }
 S
-    chmod +x /usr/local/bin/ha-boot-check
-    cat > /etc/systemd/system/ha-boot-check.service << 'UNIT'
+  chmod +x /usr/local/bin/ha-boot-check
+
+  cat > /etc/systemd/system/ha-boot-check.service << 'UNIT'
 [Unit]
 Description=HA проверка после загрузки
 After=docker.service hassio-supervisor.service
@@ -4512,11 +4372,35 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 UNIT
-    systemctl enable ha-boot-check 2>/dev/null || true
-    msg_ok "Восстановление загрузки"
-  fi
+  systemctl enable ha-boot-check 2>/dev/null || true
+  msg_ok "Скрипт: Восстановление загрузки"
+}
 
-    # --- Tailscale VPN ---
+# ============================================================================
+# ШАГ: УТИЛИТЫ
+# ============================================================================
+step_extras() {
+  local sid="extras"; is_done "$sid" && return 0
+  header "[${CURRENT_STEP_NUM}/${TOTAL_STEPS}] УТИЛИТЫ"
+
+  # 1. Хост и mDNS
+  configure_hostname_avahi
+
+  # 2. Секреты и базовые утилиты
+  setup_ha_secrets
+  setup_script_notify
+
+  # 3. Опциональные утилиты
+  [ "$OPT_WATCHDOG" = true ]      && setup_script_watchdog
+  [ "$OPT_THERMAL" = true ]       && setup_script_thermal
+  [ "$OPT_BACKUP" = true ]        && setup_script_backups
+  [ "$OPT_MONITORING" = true ]    && setup_script_metrics
+  [ "$OPT_BOOT_RECOVERY" = true ] && setup_script_boot_check
+
+  # Базовые скрипты здоровья (ставим всегда)
+  setup_script_health
+
+  # 4. VPN и Туннели
   if [ "$OPT_TAILSCALE" = true ]; then
     msg_action "Настройка Tailscale VPN..."
     if [ -n "${TS_AUTHKEY}" ]; then
@@ -4528,7 +4412,6 @@ UNIT
     auth_tailscale "$ts_key"
   fi
 
-  # --- Cloudflare Tunnel ---
   if [ "$OPT_CLOUDFLARED" = true ]; then
     msg_action "Настройка Cloudflare Tunnel..."
     if [ -n "${CF_TUNNEL_TOKEN}" ]; then
@@ -4541,21 +4424,12 @@ UNIT
       configure_cloudflare_tunnel "$cf_token"
     fi
   fi
-  
+
+  # 5. Поиск USB
   detect_usb_dongles
 
-  # --- Cron ---
-  {
-    echo "# HA Installer v${SCRIPT_VERSION}"
-    [ "$OPT_WATCHDOG" = true ] && printf '*/5 * * * * root /usr/local/bin/ha-watchdog >/dev/null 2>&1\n*/10 * * * * root /usr/local/bin/ha-net-recovery >/dev/null 2>&1\n30 3 * * * root /usr/local/bin/ha-cleanup >/dev/null 2>&1\n'
-    [ "$OPT_THERMAL" = true ]      && echo '*/5 * * * * root /usr/local/bin/ha-thermal >/dev/null 2>&1'
-    [ "$OPT_BACKUP" = true ]       && echo '0 4 * * 0 root /usr/local/bin/ha-backup >/dev/null 2>&1'
-    [ "$OPT_REMOTE_BACKUP" = true ] && echo '30 4 * * 0 root /usr/local/bin/ha-backup-remote >/dev/null 2>&1'
-    [ "$OPT_MONITORING" = true ]   && echo '* * * * * root /usr/local/bin/ha-metrics >/dev/null 2>&1'
-    echo '0 9 * * 1 root /usr/local/bin/ha-weekly-report >/dev/null 2>&1'
-  } > /etc/cron.d/ha-tools
-  chmod 644 /etc/cron.d/ha-tools
-  msg_ok "Задания cron"
+  # 6. Настройка Cron
+  configure_cron
 
   mark_done "$sid"
 }
