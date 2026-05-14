@@ -1259,20 +1259,9 @@ os_release_needs_faking() {
   return 1
 }
 
-backup_os_release() {
-  mkdir -p "$BACKUP_DIR"
-  if [ ! -f "${BACKUP_DIR}/os-release.original" ]; then
-    if [ -L /etc/os-release ]; then
-      readlink /etc/os-release > "${BACKUP_DIR}/os-release.symlink"
-      cp "$(readlink -f /etc/os-release)" "${BACKUP_DIR}/os-release.original"
-    else
-      cp /etc/os-release "${BACKUP_DIR}/os-release.original"
-    fi
-  fi
-}
-
-fake_os_release() {
-  backup_os_release; detect_system_info
+# Разовая подмена среды для прохождения проверок установщика
+apply_os_release_fake() {
+  detect_system_info
   local tc="bookworm" tv="12"
   if [ "$CACHED_CODENAME" = "trixie" ] || [ "$CACHED_VERSION_ID" = "13" ]; then
     tc="trixie"; tv="13"
@@ -1281,6 +1270,21 @@ fake_os_release() {
   elif [ "$CACHED_CODENAME" = "sid" ] || [ "$CACHED_CODENAME" = "testing" ]; then
     tc="trixie"; tv="13"
   fi
+
+  # Бэкап оригинала (если еще не сделан)
+  mkdir -p "${BACKUP_DIR}"
+  if [ ! -f "${BACKUP_DIR}/os-release.original" ]; then
+    if [ -L /etc/os-release ]; then
+      readlink /etc/os-release > "${BACKUP_DIR}/os-release.symlink"
+      cp "$(readlink -f /etc/os-release)" "${BACKUP_DIR}/os-release.original"
+    else
+      cp /etc/os-release "${BACKUP_DIR}/os-release.original"
+    fi
+  fi
+
+  # КРИТИЧЕСКИ ВАЖНО: Удаляем перед созданием, чтобы не сломать /usr/lib/os-release
+  rm -f /etc/os-release
+
   cat > /etc/os-release << EOF
 PRETTY_NAME="Debian GNU/Linux ${tv} (${tc})"
 NAME="Debian GNU/Linux"
@@ -1292,19 +1296,38 @@ HOME_URL="https://www.debian.org/"
 SUPPORT_URL="https://www.debian.org/support"
 BUG_REPORT_URL="https://bugs.debian.org/"
 EOF
+
   cp /etc/os-release "$FAKED_OS_RELEASE"
   OS_RELEASE_FAKED=true
   msg_ok "os-release -> Debian ${tv} (${tc})"
 }
 
-restore_os_release() {
+# Создание drop-in для systemd (создает файл, патчит конфигурацию)
+setup_os_release_dropin() {
+  mkdir -p /etc/systemd/system/hassio-supervisor.service.d
+  cat > /etc/systemd/system/hassio-supervisor.service.d/fix-os-release.conf << DROPIN
+[Service]
+ExecStartPre=/bin/bash -c 'rm -f /etc/os-release; F="${BACKUP_DIR}/os-release.faked"; [ -f "\$F" ] && cp "\$F" /etc/os-release'
+ExecStopPost=/bin/bash -c 'rm -f /etc/os-release; S="${BACKUP_DIR}/os-release.symlink"; O="${BACKUP_DIR}/os-release.original"; if [ -f "\$S" ]; then ln -sf "$(cat "\$S")" /etc/os-release; elif [ -f "\$O" ]; then cp "\$O" /etc/os-release; fi'
+DROPIN
+  schedule_daemon_reload
+  flush_daemon_reload
+  msg_info "Drop-in: подмена os-release при старте Supervisor"
+}
+
+# Восстановление оригинального состояния среды
+apply_os_release_restore() {
+  # Удаляем текущий файл/фейк
+  rm -f /etc/os-release
+
   if [ -f "${BACKUP_DIR}/os-release.symlink" ]; then
     local lt
     lt=$(cat "${BACKUP_DIR}/os-release.symlink")
-    cp "${BACKUP_DIR}/os-release.original" "$lt" 2>/dev/null
+    # Восстанавливаем симлинк. Сам файл /usr/lib/os-release мы не трогали, он цел!
     ln -sf "$lt" /etc/os-release 2>/dev/null
-    msg_ok "os-release восстановлен (симлинк)"
+    msg_ok "os-release восстановлен (симлинк -> $lt)"
   elif [ -f "${BACKUP_DIR}/os-release.original" ]; then
+    # Если изначально был обычный файл, просто возвращаем его
     cp "${BACKUP_DIR}/os-release.original" /etc/os-release
     msg_ok "os-release восстановлен"
   fi
@@ -3616,6 +3639,102 @@ step_install_os_agent() {
 }
 
 # ============================================================================
+# WAIT: Ожидание готовности сервисов
+# ============================================================================
+
+# Ожидание запуска службы hassio-supervisor
+wait_supervisor() {
+  local to="${1:-120}" el=0
+  while ! systemctl is-active --quiet hassio-supervisor 2>/dev/null; do
+    sleep 5; el=$((el+5))
+    [ $el -ge $to ] && { msg_warn "Таймаут ожидания supervisor"; return 1; }
+    [ $((el%15)) -eq 0 ] && msg_dim "Ожидание Supervisor... ${el}с"
+  done
+  msg_ok "hassio-supervisor активен"
+  return 0
+}
+
+# Ожидание запуска всех контейнеров HA
+wait_ha_containers() {
+  local to="${1:-900}" el=0
+  local expected="hassio_dns hassio_cli hassio_audio hassio_multicast hassio_observer"
+  local all_ok=false
+
+  msg_action "Ожидание загрузки контейнеров (5-20 мин)..."
+  while [ $el -lt $to ]; do
+    local running=0 total=0
+    for c in $expected homeassistant; do
+      total=$((total + 1))
+      if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${c}$"; then
+        running=$((running + 1))
+      fi
+    done
+
+    if [ $running -eq $total ]; then
+      all_ok=true; break
+    fi
+
+    progress_bar $el $to "Контейнеры: ${running}/${total}"
+    sleep 15; el=$((el + 15))
+
+    # Каждые 3 минуты проверяем supervisor
+    if [ $((el % 180)) -eq 0 ]; then
+      progress_clear
+      if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^hassio_supervisor$'; then
+        msg_warn "Supervisor остановился, перезапуск..."
+        systemctl restart hassio-supervisor 2>/dev/null || true
+      fi
+    fi
+  done
+
+  progress_clear
+
+  if [ "$all_ok" = true ]; then
+    msg_ok "Все контейнеры запущены (${el}с)"
+    return 0
+  else
+    msg_warn "Не все контейнеры загрузились. Supervisor продолжит в фоне."
+    return 1
+  fi
+}
+
+# ============================================================================
+# INSTALL: Установка пакетов
+# ============================================================================
+
+# Установка deb-пакета HA Supervised с обработкой зависимостей
+install_ha_supervised_pkg() {
+  local deb_file="${1:-}"
+  local machine="${2:-qemuarm-64}"
+  
+  [ ! -f "$deb_file" ] && { msg_error "DEB файл не найден"; return 1; }
+  
+  msg_action "Установка HA Supervised..."
+  msg_dim "Машина: ${machine}"
+  export MACHINE="$machine"
+
+  local dpkg_log="${HA_TMP}/dpkg_output.log"
+  DEBIAN_FRONTEND=noninteractive dpkg -i "$deb_file" > "$dpkg_log" 2>&1
+  local de=$?
+
+  # Фильтрованный вывод лога
+  grep -iE "(pull|download|unpack|setting up|error|warn)" "$dpkg_log" 2>/dev/null \
+    | grep -vi "cgroup v1" \
+    | while IFS= read -r l; do echo -e "   ${BLUE}|${NC} ${l}"; done
+  rm -f "$dpkg_log"
+
+  # Обработка ошибок dpkg
+  if [ $de -ne 0 ]; then
+    msg_warn "dpkg завершился с кодом ${de}, попытка исправить зависимости..."
+    if ! apt-get install -f -y >/dev/null 2>&1; then
+      msg_error "Не удалось исправить зависимости! Установка HA прервана."
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# ============================================================================
 # ШАГ: HOME ASSISTANT SUPERVISED
 # ============================================================================
 step_install_ha() {
@@ -3623,150 +3742,35 @@ step_install_ha() {
   header "[${CURRENT_STEP_NUM}/${TOTAL_STEPS}] HOME ASSISTANT SUPERVISED"
 
   require_disk_space 1500 "HA" || { msg_error "Нет места для HA"; exit 1; }
-  mkdir -p "$BACKUP_DIR"
-  push_rollback 'restore_os_release 2>/dev/null; dpkg --purge homeassistant-supervised 2>/dev/null'
+  push_rollback 'apply_os_release_restore 2>/dev/null; dpkg --purge homeassistant-supervised 2>/dev/null'
 
+  # 1. Подмена os-release
   if os_release_needs_faking; then
     msg_warn "Подмена os-release"
-    fake_os_release
+    apply_os_release_fake
   else
     msg_ok "os-release OK"
-    backup_os_release
   fi
 
-  msg_action "Установка HA (5-15 мин)..."
-  msg_dim "Машина: ${HA_MACHINE}"
-  export MACHINE="$HA_MACHINE"
+  # 2. Установка пакета
+  if ! install_ha_supervised_pkg "${HA_TMP}/ha.deb" "$HA_MACHINE"; then
+    msg_error "Ошибка установки пакета HA!"
+    apply_os_release_restore # Откатываем подмену, если установка провалилась
+    return 1
+  fi
 
-  # dpkg without pipe (proper Ctrl+C handling)
-  local dpkg_log="${HA_TMP}/dpkg_output.log"
-  DEBIAN_FRONTEND=noninteractive dpkg -i "${HA_TMP}/ha.deb" > "$dpkg_log" 2>&1
-  local de=$?
-
-  # Show filtered output
-  grep -iE "(pull|download|unpack|setting up|error|warn)" "$dpkg_log" 2>/dev/null \
-    | grep -vi "cgroup v1" \
-    | while IFS= read -r l; do echo -e "   ${BLUE}|${NC} ${l}"; done
-  rm -f "$dpkg_log"
-
-  [ $de -ne 0 ] && { msg_warn "dpkg код ${de}"; apt-get install -f -y >/dev/null 2>&1 || true; }
-
+  # 3. Настройка drop-in для systemd
   if [ "$OS_RELEASE_FAKED" = true ]; then
-    mkdir -p /etc/systemd/system/hassio-supervisor.service.d
-    cat > /etc/systemd/system/hassio-supervisor.service.d/fix-os-release.conf << DROPIN
-[Service]
-ExecStartPre=/bin/bash -c 'F="${BACKUP_DIR}/os-release.faked"; [ -f "\$F" ] && cp "\$F" /etc/os-release'
-ExecStopPost=/bin/bash -c 'O="${BACKUP_DIR}/os-release.original"; [ -f "\$O" ] && cp "\$O" /etc/os-release'
-DROPIN
-    schedule_daemon_reload
-    flush_daemon_reload
-    restore_os_release
+    setup_os_release_dropin
+    apply_os_release_restore # Возвращаем оригинальный os-release для системы
     msg_info "Drop-in: подмена при старте, восстановление при остановке"
   fi
 
-  msg_action "Ожидание supervisor..."
-  local sw=0
-  while ! systemctl is-active --quiet hassio-supervisor 2>/dev/null; do
-    sleep 5; sw=$((sw+5))
-    [ $sw -ge 120 ] && { msg_warn "Таймаут ожидания supervisor"; break; }
-    [ $((sw%15)) -eq 0 ] && msg_dim "${sw}с..."
-  done
-  [ $sw -lt 120 ] && msg_ok "hassio-supervisor активен"
+  # 4. Ожидание сервисов
+  wait_supervisor 120 || true
+  wait_ha_containers 900
 
-  # Ожидание загрузки всех контейнеров
-    msg_action "Ожидание загрузки контейнеров (5-20 мин)..."
-    local expected="hassio_dns hassio_cli hassio_audio hassio_multicast hassio_observer"
-    local max_wait=900
-    local elapsed=0
-    local all_ok=false
-
-    while [ $elapsed -lt $max_wait ]; do
-        local running=0
-        local total=0
-        local missing=""
-
-        for c in $expected; do
-            total=$((total + 1))
-            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${c}$"; then
-                running=$((running + 1))
-            else
-                missing="${missing} ${c}"
-            fi
-        done
-
-        # homeassistant отдельно (появляется последним)
-        total=$((total + 1))
-        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^homeassistant$'; then
-            running=$((running + 1))
-        else
-            missing="${missing} homeassistant"
-        fi
-
-        if [ $running -eq $total ]; then
-            all_ok=true
-            break
-        fi
-
-        progress_bar $elapsed $max_wait "Контейнеры: ${running}/${total}"
-        sleep 15
-        elapsed=$((elapsed + 15))
-
-        # Каждые 3 минуты показать что отсутствует
-        if [ $((elapsed % 180)) -eq 0 ] && [ -n "$missing" ]; then
-            progress_clear
-            msg_dim "Ожидание:${missing} (${elapsed}с)"
-        fi
-
-        # Проверить что supervisor жив
-        if [ $((elapsed % 120)) -eq 0 ]; then
-            if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^hassio_supervisor$'; then
-                msg_warn "Supervisor остановился, перезапуск..."
-                systemctl restart hassio-supervisor 2>/dev/null || true
-                sleep 15
-            fi
-        fi
-    done
-
-    progress_clear
-
-    if [ "$all_ok" = true ]; then
-        msg_ok "Все контейнеры запущены (${elapsed}с)"
-    else
-        # Показать результат
-        local running_list=""
-        local missing_list=""
-        for c in $expected homeassistant; do
-            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${c}$"; then
-                running_list="${running_list} ${c}"
-            else
-                missing_list="${missing_list} ${c}"
-            fi
-        done
-
-        [ -n "$running_list" ] && msg_ok "Запущены:${running_list}"
-
-        if [ -n "$missing_list" ]; then
-            msg_warn "Не запустились:${missing_list}"
-            msg_action "Перезапуск supervisor..."
-            systemctl restart hassio-supervisor 2>/dev/null || true
-            sleep 30
-
-            # Повторная проверка
-            local still_missing=""
-            for c in $expected homeassistant; do
-                docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${c}$" || still_missing="${still_missing} ${c}"
-            done
-
-            if [ -z "$still_missing" ]; then
-                msg_ok "После перезапуска все контейнеры запущены"
-            else
-                msg_warn "Не загрузились:${still_missing}"
-                msg_dim "Supervisor продолжит загрузку в фоне"
-                msg_dim "Проверить позже: docker ps"
-            fi
-        fi
-    fi
-
+  # 5. Финализация шага
   touch "$GRACE_MARKER"
   save_config
   msg_ok "HA Supervised установлен"
