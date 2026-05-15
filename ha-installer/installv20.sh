@@ -2367,7 +2367,7 @@ show_modules_menu() {
     if command -v whiptail &>/dev/null; then
       mod=$(whiptail --title "Модули и Фичи" --menu \
         "Выберите модуль для установки.\nЯдро Home Assistant затронуто НЕ БУДЕТ.\n\nESC - вернуться в главное меню" \
-        24 60 15 \
+        26 60 15 \
         "== СИСТЕМА ==" "" \
         "zram"          "ZRAM Swap (сжатие в RAM)" \
         "emmc"          "Оптимизация eMMC (noatime)" \
