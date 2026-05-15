@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 20.9.4
+# Version: 20.9.5
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="20.9.4"
+readonly SCRIPT_VERSION="20.9.5"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -2367,7 +2367,7 @@ show_modules_menu() {
     if command -v whiptail &>/dev/null; then
       mod=$(whiptail --title "Модули и Фичи" --menu \
         "Выберите модуль для установки.\nЯдро Home Assistant затронуто НЕ БУДЕТ.\n\nESC - вернуться в главное меню" \
-        26 60 15 \
+        28 60 17 \
         "== СИСТЕМА ==" "" \
         "zram"          "ZRAM Swap (сжатие в RAM)" \
         "emmc"          "Оптимизация eMMC (noatime)" \
@@ -2375,6 +2375,8 @@ show_modules_menu() {
         "== НАДЕЖНОСТЬ ==" "" \
         "bootrecovery"  "Восст. загрузки (проверка Docker)" \
         "watchdog"      "Watchdog (перезапуск + алерты)" \
+        "== ОПОВЕЩЕНИЯ ==" "" \
+        "notifications" "Настройка Telegram / Webhook" \
         "== БЭКАПЫ ==" "" \
         "backups"       "Бэкапы (локальные + снапшоты)" \
         "== ИНТЕГРАЦИИ ==" "" \
@@ -2394,6 +2396,7 @@ show_modules_menu() {
         "usbpower"      "USB питание" \
         "bootrecovery"  "Восст. загрузки" \
         "watchdog"      "Watchdog" \
+        "notifications" "Уведомления (TG/Webhook)" \
         "backups"       "Бэкапы" \
         "hacs"          "HACS" \
         "mdns"          "mDNS (Avahi)" \
@@ -2410,7 +2413,7 @@ show_modules_menu() {
 
     detect_system_info
     setup_dirs
-    load_config
+    load_config   # Загружаем текущие OPT_*, чтобы не затереть cron
     acquire_lock
     
     case "$mod" in
@@ -2419,6 +2422,7 @@ show_modules_menu() {
       usbpower)      module_usb_power ;;
       bootrecovery)  module_boot_recovery ;;
       watchdog)      module_watchdog ;;
+      notifications) module_notifications ;;
       backups)       module_backups ;;
       hacs)          module_hacs ;;
       mdns)          module_mdns ;;
@@ -2534,6 +2538,91 @@ module_monitoring() {
   OPT_MONITORING=true
   configure_cron
   msg_ok "Модуль мониторинга активирован"
+}
+
+module_notifications() {
+  header "МОДУЛЬ: УВЕДОМЛЕНИЯ"
+  local HAS_WHIPTAIL=false; command -v whiptail &>/dev/null && HAS_WHIPTAIL=true
+  
+  # Убедимся, что скрипт и папка секретов существуют
+  setup_ha_secrets
+  [ ! -f /usr/local/bin/ha-notify ] && setup_script_notify
+
+  local notif="none"
+  if [ "$HAS_WHIPTAIL" = true ]; then
+    notif=$(_whip_menu "Уведомления" \
+      "none"     "Отключить уведомления" \
+      "telegram" "Telegram бот" \
+      "ntfy"     "ntfy.sh (бесплатно, без регистрации)" \
+      "discord"  "Discord webhook" \
+      "custom"   "Свой URL (Slack, Gotify и др.)") || return 0
+  else
+    notif=$(text_menu "Уведомления" "Способ:" \
+      "none" "Отключить" "telegram" "Telegram" "ntfy" "ntfy.sh" \
+      "discord" "Discord" "custom" "URL") || return 0
+  fi
+
+  case "$notif" in
+    none)
+      # Очищаем все секреты
+      printf '' > "${HA_INSTALLER_DIR}/secrets/tg_token"
+      printf '' > "${HA_INSTALLER_DIR}/secrets/tg_chat"
+      printf '' > "${HA_INSTALLER_DIR}/secrets/webhook_url"
+      msg_ok "Уведомления отключены"
+      ;;
+    telegram)
+      if [ "$HAS_WHIPTAIL" = true ]; then
+        TG_TOKEN=$(_whip_input "Telegram" "Токен бота\n\nПолучите у @BotFather" "") || return 0
+        [ -n "$TG_TOKEN" ] && { TG_CHAT=$(_whip_input "Telegram" "Chat ID\n\nУзнайте у @userinfobot" "") || return 0; }
+      else
+        TG_TOKEN=$(text_input "Токен бота" "")
+        [ -n "$TG_TOKEN" ] && TG_CHAT=$(text_input "Chat ID" "")
+      fi
+      if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+        printf '%s' "$TG_TOKEN" > "${HA_INSTALLER_DIR}/secrets/tg_token"
+        printf '%s' "$TG_CHAT" > "${HA_INSTALLER_DIR}/secrets/tg_chat"
+        printf '' > "${HA_INSTALLER_DIR}/secrets/webhook_url" # Очищаем вебхук
+        msg_ok "Telegram настроен"
+      else
+        msg_warn "Не указан токен или Chat ID. Настройка отменена."
+      fi
+      ;;
+    ntfy)
+      local topic=""
+      if [ "$HAS_WHIPTAIL" = true ]; then
+        topic=$(_whip_input "ntfy.sh" "Название темы\n\nУстановите ntfy на телефон и подпишитесь на эту тему" "ha-$(hostname 2>/dev/null || echo box)") || return 0
+      else
+        topic=$(text_input "Тема ntfy.sh" "ha-$(hostname 2>/dev/null || echo box)")
+      fi
+      if [ -n "$topic" ]; then
+        printf '%s' "https://ntfy.sh/${topic}" > "${HA_INSTALLER_DIR}/secrets/webhook_url"
+        printf '' > "${HA_INSTALLER_DIR}/secrets/tg_token"
+        printf '' > "${HA_INSTALLER_DIR}/secrets/tg_chat" # Очищаем Telegram
+        msg_ok "ntfy.sh настроен"
+      fi
+      ;;
+    discord|custom)
+      local url=""
+      if [ "$HAS_WHIPTAIL" = true ]; then
+        url=$(_whip_input "Webhook" "URL для отправки уведомлений" "") || return 0
+      else
+        url=$(text_input "Webhook URL" "")
+      fi
+      if [ -n "$url" ]; then
+        printf '%s' "$url" > "${HA_INSTALLER_DIR}/secrets/webhook_url"
+        printf '' > "${HA_INSTALLER_DIR}/secrets/tg_token"
+        printf '' > "${HA_INSTALLER_DIR}/secrets/tg_chat" # Очищаем Telegram
+        msg_ok "Webhook настроен"
+      fi
+      ;;
+  esac
+
+  # Отправка тестового уведомления (если не отключили)
+  if [ "$notif" != "none" ]; then
+    msg_action "Отправка тестового уведомления..."
+    /usr/local/bin/ha-notify "Тест уведомлений HA Installer"
+    msg_ok "Проверьте устройство/чат"
+  fi
 }
 
 module_mdns() {
