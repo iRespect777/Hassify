@@ -2368,25 +2368,18 @@ show_modules_menu() {
       mod=$(whiptail --title "Модули и Фичи" --menu \
         "Выберите модуль для установки.\nЯдро Home Assistant затронуто НЕ БУДЕТ.\n\nESC - вернуться в главное меню" \
         28 60 17 \
-        "== СИСТЕМА ==" "" \
         "zram"          "ZRAM Swap (сжатие в RAM)" \
         "emmc"          "Оптимизация eMMC (noatime)" \
         "usbpower"      "USB питание (откл. спящего режима)" \
-        "== НАДЕЖНОСТЬ ==" "" \
         "bootrecovery"  "Восст. загрузки (проверка Docker)" \
         "watchdog"      "Watchdog (перезапуск + алерты)" \
-        "== ОПОВЕЩЕНИЯ ==" "" \
         "notifications" "Настройка Telegram / Webhook" \
-        "== БЭКАПЫ ==" "" \
         "backups"       "Бэкапы (локальные + снапшоты)" \
-        "== ИНТЕГРАЦИИ ==" "" \
         "hacs"          "HACS (магазин компонентов)" \
         "mdns"          "mDNS (доступ по .local)" \
-        "== СЕТЬ И ДОСТУП ==" "" \
         "tailscale"     "Tailscale VPN (удал. доступ)" \
         "cloudflare"    "Cloudflare Tunnel (HTTPS)" \
         "security"      "Безопасность (UFW + SSH)" \
-        "== МОНИТОРИНГ ==" "" \
         "monitoring"    "Мониторинг (Prometheus метрики)" \
         3>&1 1>&2 2>&3) || return 1
     else
