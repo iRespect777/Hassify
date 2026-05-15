@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 20.9.3
+# Version: 20.9.4
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="20.9.3"
+readonly SCRIPT_VERSION="20.9.4"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -2366,7 +2366,7 @@ show_modules_menu() {
     local mod
     if command -v whiptail &>/dev/null; then
       mod=$(whiptail --title "Модули и Фичи" --menu \
-        "Выберите модуль для установки.\nЯдро Home Assistant затронуто НЕ БУДЕТ." \
+        "Выберите модуль для установки.\nЯдро Home Assistant затронуто НЕ БУДЕТ.\n\nESC - вернуться в главное меню" \
         24 60 15 \
         "== СИСТЕМА ==" "" \
         "zram"          "ZRAM Swap (сжатие в RAM)" \
@@ -2386,7 +2386,6 @@ show_modules_menu() {
         "security"      "Безопасность (UFW + SSH)" \
         "== МОНИТОРИНГ ==" "" \
         "monitoring"    "Мониторинг (Prometheus метрики)" \
-        "back"          "Назад в главное меню" \
         3>&1 1>&2 2>&3) || return 1
     else
       mod=$(text_menu "Модули и Фичи" "Выберите:" \
@@ -2401,11 +2400,11 @@ show_modules_menu() {
         "tailscale"     "Tailscale VPN" \
         "cloudflare"    "Cloudflare Tunnel" \
         "security"      "Безопасность (UFW)" \
-        "monitoring"    "Мониторинг (Prometheus)" \
-        "back"          "Назад") || return 1
+        "monitoring"    "Мониторинг (Prometheus)") || return 1
     fi
+
     [ -z "$mod" ] && return 1
-    [ "$mod" = "back" ] && return 0
+    
     # Пропускаем заголовки групп в whiptail
     [[ "$mod" =~ ^==.*==$ ]] && continue
 
