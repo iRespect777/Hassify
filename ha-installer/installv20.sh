@@ -2373,12 +2373,12 @@ show_modules_menu() {
         "emmc"          "Оптимизация eMMC (noatime, логи)" \
         "usbpower"      "USB питание (отключение спящего режима)" \
         "== НАДЕЖНОСТЬ ==" "" \
-        "bootrecovery"  "Восстановление загрузки" \
+        "bootrecovery"  "Восстановление загрузки (проверка Docker/FS)" \
         "watchdog"      "Watchdog (авто-перезапуск HA + алерты)" \
         "== РЕЗЕРВНОЕ КОПИРОВАНИЕ ==" "" \
         "backups"       "Бэкапы (локальные + CLI снапшоты)" \
         "== ИНТЕГРАЦИИ ==" "" \
-        "hacs"          "HACS (магазин аддонов)" \
+        "hacs"          "HACS (магазин кастом компонентов)" \
         "mdns"          "mDNS (доступ по homeassistant.local)" \
         "== СЕТЬ И БЕЗОПАСНОСТЬ ==" "" \
         "tailscale"     "Tailscale VPN (удал. доступ)" \
@@ -2386,6 +2386,7 @@ show_modules_menu() {
         "security"      "UFW (безопасные правила) + SSH" \
         "== МОНИТОРИНГ ==" "" \
         "monitoring"    "Prometheus Node Exporter метрики" \
+        "back"          "Назад в главное меню" \
         3>&1 1>&2 2>&3) || return 1
     else
       mod=$(text_menu "Модули и Фичи" "Выберите:" \
@@ -2401,8 +2402,8 @@ show_modules_menu() {
         "cloudflare"    "Cloudflare Tunnel" \
         "security"      "Безопасность (UFW)" \
         "monitoring"    "Мониторинг (Prometheus)" \
+        "back"          "Назад") || return 1
     fi
-
     [ -z "$mod" ] && return 1
     [ "$mod" = "back" ] && return 0
     # Пропускаем заголовки групп в whiptail
