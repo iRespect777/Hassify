@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 20.9.99
+# Version: 20.9.991
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="20.9.99"
+readonly SCRIPT_VERSION="20.9.991"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -1158,7 +1158,6 @@ detect_machine_type() {
         *Khadas*VIM3*)    echo "khadas-vim3";;
         *)                echo "qemuarm-64";;
       esac;;
-    armv7l) echo "qemuarm";;
     *)      echo "qemuarm-64";;
   esac
 }
@@ -1528,78 +1527,6 @@ verify_installed_scripts() {
 # ============================================================================
 # v9.x FEATURES
 # ============================================================================
-setup_data_dir() {
-  [ -z "$OPT_DATA_DIR" ] && return 0
-  local t="$OPT_DATA_DIR"
-
-  if [ ! -d "$t" ]; then msg_error "Каталог не найден: ${t}"; return 1; fi
-  if ! touch "${t}/.ha_test" 2>/dev/null; then msg_error "Нет доступа на запись: ${t}"; return 1; fi
-  rm -f "${t}/.ha_test"
-
-  local fstype
-  fstype=$(df -T "$t" 2>/dev/null | awk 'NR==2{print $2}')
-  case "$fstype" in
-    ext4|btrfs|xfs|ext3) msg_ok "ФС данных: ${fstype}" ;;
-    vfat|ntfs|exfat|fat32) msg_error "Неподдерживаемая ФС: ${fstype} (нужна ext4/btrfs/xfs)"; return 1 ;;
-    *) msg_warn "ФС данных: ${fstype} (может работать)" ;;
-  esac
-
-  local free_mb
-  free_mb=$(df -m "$t" | awk 'NR==2{print $4}')
-  [ "$free_mb" -lt 10000 ] && msg_warn "Только ${free_mb}МБ свободно на ${t} (рекомендуется 10ГБ+)"
-
-  msg_action "Настройка внешнего хранилища: ${t}..."
-
-  if [ -d /var/lib/docker ] && [ ! -L /var/lib/docker ]; then
-    systemctl stop docker 2>/dev/null || true
-    mkdir -p "${t}/docker"
-    if [ ! -d "${t}/docker/overlay2" ]; then
-      rsync -aHAX /var/lib/docker/ "${t}/docker/" 2>/dev/null || \
-        cp -a /var/lib/docker/* "${t}/docker/" 2>/dev/null
-    fi
-    mv /var/lib/docker /var/lib/docker.bak 2>/dev/null || true
-    ln -sf "${t}/docker" /var/lib/docker
-    systemctl start docker 2>/dev/null || true
-    msg_ok "Docker -> ${t}/docker"
-  fi
-
-  mkdir -p "${t}/hassio"
-  if [ -d "$HASSIO_DIR" ] && [ ! -L "$HASSIO_DIR" ]; then
-    rsync -aHAX "${HASSIO_DIR}/" "${t}/hassio/" 2>/dev/null || \
-      cp -a "${HASSIO_DIR}"/* "${t}/hassio/" 2>/dev/null
-    mv "$HASSIO_DIR" "${HASSIO_DIR}.bak" 2>/dev/null || true
-    ln -sf "${t}/hassio" "$HASSIO_DIR"
-    msg_ok "HA -> ${t}/hassio"
-  elif [ ! -d "$HASSIO_DIR" ]; then
-    ln -sf "${t}/hassio" "$HASSIO_DIR"
-    msg_ok "HA привязан: ${t}/hassio"
-  fi
-}
-
-setup_timezone() {
-  [ -z "$OPT_TIMEZONE" ] && return 0
-  if [ -f "/usr/share/zoneinfo/${OPT_TIMEZONE}" ]; then
-    timedatectl set-timezone "$OPT_TIMEZONE" 2>/dev/null || \
-      ln -sf "/usr/share/zoneinfo/${OPT_TIMEZONE}" /etc/localtime
-    msg_ok "Часовой пояс: ${OPT_TIMEZONE}"
-  else
-    msg_warn "Неизвестный часовой пояс: ${OPT_TIMEZONE}"
-  fi
-}
-
-setup_locale() {
-  [ -z "$OPT_LOCALE" ] && return 0
-  msg_action "Локаль: ${OPT_LOCALE}..."
-  if command -v locale-gen &>/dev/null; then
-    sed -i "s/^# *${OPT_LOCALE}/${OPT_LOCALE}/" /etc/locale.gen 2>/dev/null
-    locale-gen 2>/dev/null || true
-    update-locale LANG="${OPT_LOCALE}" 2>/dev/null || true
-    msg_ok "Локаль: ${OPT_LOCALE}"
-  else
-    msg_warn "locale-gen недоступен"
-  fi
-}
-
 setup_wifi() {
   [ -z "$OPT_WIFI_SSID" ] && return 0
   command -v nmcli &>/dev/null || { msg_warn "nmcli недоступен для WiFi"; return 0; }
@@ -1699,47 +1626,6 @@ setup_wifi() {
   # Вышли по таймауту
   msg_warn "WiFi: таймаут получения IP (статус: ${wifi_state:-нет ответа})"
   msg_dim "Сеть может появиться позже"
-}
-
-setup_swap() {
-  [ -z "$OPT_SWAP_SIZE" ] && return 0
-  case "$OPT_SWAP_SIZE" in
-    none|0)
-      swapoff -a 2>/dev/null
-      sed -i '/swap/d' /etc/fstab 2>/dev/null
-      msg_ok "Swap отключён"
-      ;;
-    zram)
-      msg_dim "ZRAM настроится на шаге производительности"
-      ;;
-    *)
-      if [[ "$OPT_SWAP_SIZE" =~ ^[0-9]+$ ]]; then
-        swapoff /swapfile 2>/dev/null; rm -f /swapfile 2>/dev/null
-        dd if=/dev/zero of=/swapfile bs=1M count="$OPT_SWAP_SIZE" status=none 2>/dev/null
-        chmod 600 /swapfile
-        mkswap /swapfile >/dev/null 2>&1
-        swapon /swapfile 2>/dev/null
-        grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-        msg_ok "Swap: ${OPT_SWAP_SIZE}МБ"
-      else
-        msg_warn "Неверный размер swap: ${OPT_SWAP_SIZE}"
-      fi
-      ;;
-  esac
-}
-
-setup_docker_mirror() {
-  [ -z "$OPT_DOCKER_MIRROR" ] && return 0
-  mkdir -p /etc/docker
-  if [ -f /etc/docker/daemon.json ] && command -v jq &>/dev/null; then
-    jq --arg m "$OPT_DOCKER_MIRROR" '. + {"registry-mirrors": [$m]}' \
-      /etc/docker/daemon.json > /tmp/dj.tmp 2>/dev/null && \
-      mv /tmp/dj.tmp /etc/docker/daemon.json
-  else
-    echo "{\"log-driver\":\"journald\",\"storage-driver\":\"overlay2\",\"registry-mirrors\":[\"${OPT_DOCKER_MIRROR}\"]}" \
-      > /etc/docker/daemon.json
-  fi
-  msg_ok "Зеркало Docker: ${OPT_DOCKER_MIRROR}"
 }
 
 do_benchmark() {
@@ -2811,8 +2697,10 @@ show_main_menu() {
 setup_timezone() {
   local tz="${1:-}"
   [ -z "$tz" ] && return 0
+  msg_action "Часовой пояс: ${tz}..."
   if [ -f "/usr/share/zoneinfo/${tz}" ]; then
-    timedatectl set-timezone "$tz" 2>/dev/null || ln -sf "/usr/share/zoneinfo/${tz}" /etc/localtime
+    timedatectl set-timezone "$tz" 2>/dev/null || \
+      ln -sf "/usr/share/zoneinfo/${tz}" /etc/localtime
     msg_ok "Часовой пояс: ${tz}"
   else
     msg_warn "Неизвестный часовой пояс: ${tz}"
@@ -2822,11 +2710,14 @@ setup_timezone() {
 setup_locale() {
   local loc="${1:-}"
   [ -z "$loc" ] && return 0
+  msg_action "Локаль: ${loc}..."
   if command -v locale-gen &>/dev/null; then
     sed -i "s/^# *${loc}/${loc}/" /etc/locale.gen 2>/dev/null
     locale-gen 2>/dev/null || true
     update-locale LANG="${loc}" 2>/dev/null || true
     msg_ok "Локаль: ${loc}"
+  else
+    msg_warn "locale-gen недоступен"
   fi
 }
 
@@ -2905,36 +2796,72 @@ install_docker() {
 }
 
 configure_docker_mirror() {
-  local mirror_url="${1:-}"; [ -z "$mirror_url" ] && return 0
+  local mirror_url="${1:-}"
+  [ -z "$mirror_url" ] && return 0
+  
   mkdir -p /etc/docker
   if command -v jq &>/dev/null; then
     [ ! -f /etc/docker/daemon.json ] && echo '{}' > /etc/docker/daemon.json
-    jq --arg m "$mirror_url" '. + {"registry-mirrors": [$m]}' /etc/docker/daemon.json > /tmp/dj.tmp 2>/dev/null && mv /tmp/dj.tmp /etc/docker/daemon.json
-    msg_ok "Зеркало Docker: ${mirror_url}"
+    if jq --arg m "$mirror_url" '. + {"registry-mirrors": [$m]}' /etc/docker/daemon.json > /tmp/dj.tmp 2>/dev/null; then
+      mv /tmp/dj.tmp /etc/docker/daemon.json
+      msg_ok "Зеркало Docker: ${mirror_url}"
+    else
+      msg_error "Ошибка обновления daemon.json через jq"
+    fi
   else
-    msg_warn "jq не установлен. Не удалось добавить зеркало автоматически."
+    msg_warn "jq не установлен. Запись зеркала в daemon.json в базовом режиме."
+    echo "{\"log-driver\":\"journald\",\"storage-driver\":\"overlay2\",\"registry-mirrors\":[\"${mirror_url}\"]}" \
+      > /etc/docker/daemon.json
+    msg_ok "Зеркало Docker: ${mirror_url} (базовый режим)"
   fi
 }
 
 setup_data_dir() {
-  local target_dir="${1:-}"; [ -z "$target_dir" ] && return 0
-  if [ ! -d "$target_dir" ]; then msg_error "Каталог не найден: ${target_dir}"; return 1; fi
-  if ! touch "${target_dir}/.ha_test" 2>/dev/null; then msg_error "Нет доступа: ${target_dir}"; return 1; fi
-  rm -f "${target_dir}/.ha_test"
+  local t="${1:-}"; [ -z "$t" ] && return 0
+
+  if [ ! -d "$t" ]; then msg_error "Каталог не найден: ${t}"; return 1; fi
+  if ! touch "${t}/.ha_test" 2>/dev/null; then msg_error "Нет доступа на запись: ${t}"; return 1; fi
+  rm -f "${t}/.ha_test"
+
+  # Восстановленная проверка файловой системы
+  local fstype
+  fstype=$(df -T "$t" 2>/dev/null | awk 'NR==2{print $2}')
+  case "$fstype" in
+    ext4|btrfs|xfs|ext3) msg_ok "ФС данных: ${fstype}" ;;
+    vfat|ntfs|exfat|fat32) msg_error "Неподдерживаемая ФС: ${fstype} (нужна ext4/btrfs/xfs)"; return 1 ;;
+    *) msg_warn "ФС данных: ${fstype} (может работать)" ;;
+  esac
+
+  # Восстановленная проверка свободного места
+  local free_mb
+  free_mb=$(df -m "$t" | awk 'NR==2{print $4}')
+  [ "$free_mb" -lt 10000 ] && msg_warn "Только ${free_mb}МБ свободно на ${t} (рекомендуется 10ГБ+)"
+
+  msg_action "Настройка внешнего хранилища: ${t}..."
 
   if [ -d /var/lib/docker ] && [ ! -L /var/lib/docker ]; then
-    systemctl stop docker 2>/dev/null; mkdir -p "${target_dir}/docker"
-    [ ! -d "${target_dir}/docker/overlay2" ] && { rsync -aHAX /var/lib/docker/ "${target_dir}/docker/" 2>/dev/null || cp -a /var/lib/docker/* "${target_dir}/docker/" 2>/dev/null; }
-    mv /var/lib/docker /var/lib/docker.bak 2>/dev/null; ln -sf "${target_dir}/docker" /var/lib/docker
-    systemctl start docker 2>/dev/null; msg_ok "Docker -> ${target_dir}/docker"
+    systemctl stop docker 2>/dev/null || true
+    mkdir -p "${t}/docker"
+    if [ ! -d "${t}/docker/overlay2" ]; then
+      rsync -aHAX /var/lib/docker/ "${t}/docker/" 2>/dev/null || \
+        cp -a /var/lib/docker/* "${t}/docker/" 2>/dev/null
+    fi
+    mv /var/lib/docker /var/lib/docker.bak 2>/dev/null || true
+    ln -sf "${t}/docker" /var/lib/docker
+    systemctl start docker 2>/dev/null || true
+    msg_ok "Docker -> ${t}/docker"
   fi
 
-  mkdir -p "${target_dir}/hassio"
+  mkdir -p "${t}/hassio"
   if [ -d "$HASSIO_DIR" ] && [ ! -L "$HASSIO_DIR" ]; then
-    rsync -aHAX "${HASSIO_DIR}/" "${target_dir}/hassio/" 2>/dev/null || cp -a "${HASSIO_DIR}"/* "${target_dir}/hassio/" 2>/dev/null
-    mv "$HASSIO_DIR" "${HASSIO_DIR}.bak" 2>/dev/null; ln -sf "${target_dir}/hassio" "$HASSIO_DIR"; msg_ok "HA -> ${target_dir}/hassio"
+    rsync -aHAX "${HASSIO_DIR}/" "${t}/hassio/" 2>/dev/null || \
+      cp -a "${HASSIO_DIR}"/* "${t}/hassio/" 2>/dev/null
+    mv "$HASSIO_DIR" "${HASSIO_DIR}.bak" 2>/dev/null || true
+    ln -sf "${t}/hassio" "$HASSIO_DIR"
+    msg_ok "HA -> ${t}/hassio"
   elif [ ! -d "$HASSIO_DIR" ]; then
-    ln -sf "${target_dir}/hassio" "$HASSIO_DIR"; msg_ok "HA привязан: ${target_dir}/hassio"
+    ln -sf "${t}/hassio" "$HASSIO_DIR"
+    msg_ok "HA привязан: ${t}/hassio"
   fi
 }
 
@@ -3029,8 +2956,14 @@ step_preflight() {
   header "[${CURRENT_STEP_NUM}/${TOTAL_STEPS}] ПРЕДВАРИТЕЛЬНАЯ ПРОВЕРКА"
   detect_system_info; local err=0 wrn=0
 
-  [ "$CACHED_ARCH" = "unknown" ] && { msg_error "Архитектура: ${CACHED_MACHINE_ARCH}"; err=$((err+1)); } \
-    || msg_ok "Архитектура: ${CACHED_MACHINE_ARCH} (${CACHED_ARCH})"
+  if [ "$CACHED_MACHINE_ARCH" = "armv7l" ] || [ "$CACHED_ARCH" = "armv7" ]; then
+    msg_error "Архитектура: ${CACHED_MACHINE_ARCH}. Home Assistant Supervised больше не поддерживает 32-битные системы (требуется aarch64)."
+    err=$((err+1))
+  elif [ "$CACHED_ARCH" = "unknown" ]; then
+    msg_error "Архитектура: ${CACHED_MACHINE_ARCH}"; err=$((err+1))
+  else
+    msg_ok "Архитектура: ${CACHED_MACHINE_ARCH} (${CACHED_ARCH})"
+  fi
   msg_info "ОС: ${CACHED_PRETTY_NAME:-${CACHED_CODENAME:-?}}"
   is_armbian && msg_info "Обнаружен Armbian"
   is_trixie && msg_info "Debian 13 Trixie"
@@ -3108,8 +3041,8 @@ step_preflight() {
 step_update_system() {
   local sid="update"; is_done "$sid" && return 0
   header "[${CURRENT_STEP_NUM}/${TOTAL_STEPS}] ОБНОВЛЕНИЕ СИСТЕМЫ"
-  setup_timezone
-  setup_locale
+  setup_timezone "$OPT_TIMEZONE"
+  setup_locale "$OPT_LOCALE"
   if [ "$SKIP_UPDATE" = false ]; then
     run_cmd_fatal "apt update" apt_safe update -y
     run_cmd "apt upgrade" apt_safe upgrade -y
@@ -3126,11 +3059,8 @@ step_install_deps() {
   detect_system_info
 
     local pkgs=(apparmor avahi-daemon bluez ca-certificates cifs-utils curl dbus gnupg jq
-    libglib2.0-bin nfs-common systemd-timesyncd udisks2 usbutils wget qrencode)
-
-  for p in lsb-release systemd-resolved systemd-journal-remote; do
-    pkg_available "$p" && pkgs+=("$p")
-  done
+    libglib2.0-bin lsb-release network-manager nfs-common systemd-journal-remote
+    systemd-resolved systemd-timesyncd udisks2 usbutils wget whiptail qrencode)
 
   if [ "$OPT_ZRAM" = true ]; then
     if is_armbian && is_pkg_installed armbian-zram-config; then true
@@ -3234,7 +3164,7 @@ step_install_deps() {
 
   run_cmd "apt fix" apt_safe -f install -y
   [ "$OPT_EMMC_TUNING" = true ] && apt-get clean 2>/dev/null || true
-  setup_swap
+  setup_swap "$OPT_SWAP_SIZE"
   mark_done "$sid"
 }
 
@@ -4751,11 +4681,11 @@ install_hacs() {
     msg_dim "Способ 3: загрузка на хост..."
     local hacs_zip="/tmp/hacs.zip"
     if wget -q -O "$hacs_zip" "https://github.com/hacs/integration/releases/latest/download/hacs.zip" 2>/dev/null && [ -s "$hacs_zip" ]; then
-      docker exec homeassistant mkdir -p /config/custom_components/hacs 2>/dev/null
+      docker exec homeassistant mkdir -p /config/custom_components 2>/dev/null
       docker cp "$hacs_zip" homeassistant:/tmp/hacs.zip 2>/dev/null
-      if docker exec homeassistant bash -c "cd /config/custom_components/hacs && python3 -m zipfile -e /tmp/hacs.zip . && rm -f /tmp/hacs.zip" 2>/dev/null; then
+      if docker exec homeassistant bash -c "cd /config/custom_components && python3 -m zipfile -e /tmp/hacs.zip . && rm -f /tmp/hacs.zip" 2>/dev/null; then
         hacs_ok=true
-      elif docker exec homeassistant bash -c "cd /config/custom_components/hacs && unzip -o /tmp/hacs.zip && rm -f /tmp/hacs.zip" 2>/dev/null; then
+      elif docker exec homeassistant bash -c "cd /config/custom_components && unzip -o /tmp/hacs.zip && rm -f /tmp/hacs.zip" 2>/dev/null; then
         hacs_ok=true
       fi
       rm -f "$hacs_zip"
@@ -5599,7 +5529,7 @@ do_update() {
     verify_checksum "${HA_TMP}/ha.deb" "home-assistant/supervised-installer" "$lh"
     [ "$OS_RELEASE_FAKED" = true ] && [ -f "$FAKED_OS_RELEASE" ] && cp "$FAKED_OS_RELEASE" /etc/os-release
     DEBIAN_FRONTEND=noninteractive dpkg -i "${HA_TMP}/ha.deb" >/dev/null 2>&1 || apt-get install -f -y >/dev/null 2>&1
-    [ "$OS_RELEASE_FAKED" = true ] && restore_os_release
+    [ "$OS_RELEASE_FAKED" = true ] && apply_os_release_restore
     RESOLVED_HA_VER="$lh"
   fi
 
