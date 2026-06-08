@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 20.9.991
+# Version: 20.9.992
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="20.9.991"
+readonly SCRIPT_VERSION="20.9.992"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -2987,6 +2987,27 @@ step_preflight() {
   elif [ -d /sys/fs/cgroup/unified ]; then msg_ok "cgroups: гибрид"
   else msg_warn "cgroups: v1"; wrn=$((wrn+1)); fi
 
+  # Проверка AppArmor (строгое требование HA Supervisor)
+  local aa_kernel
+  aa_kernel=$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null) || aa_kernel="N"
+  if [ "$aa_kernel" = "Y" ]; then
+    # Ядро поддерживает AppArmor. Проверяем, загружены ли политики (если есть утилита)
+    if command -v aa-enabled >/dev/null 2>&1; then
+      if aa-enabled --quiet 2>/dev/null; then
+        msg_ok "AppArmor: активен (ядро + политики)"
+      else
+        msg_warn "AppArmor: включен в ядре, но политики не загружены"
+        wrn=$((wrn+1))
+      fi
+    else
+      # Утилиты ещё нет, но ядро готово - это ОК для этапа preflight
+      msg_ok "AppArmor: поддерживается ядром"
+    fi
+  else
+    msg_warn "AppArmor: отключен в ядре (потребуется патч загрузчика и перезагрузка)"
+    wrn=$((wrn+1))
+  fi
+
   check_internet || err=$((err+1))
 
   ss -tlnp 2>/dev/null | grep -q ':8123 ' && { msg_warn "Порт 8123 занят"; wrn=$((wrn+1)); } || msg_ok "Порт 8123 свободен"
@@ -3602,13 +3623,31 @@ step_configure_apparmor() {
     local sid="apparmor"; is_done "$sid" && return 0
     header "[${CURRENT_STEP_NUM}/${TOTAL_STEPS}] APPARMOR"
 
+    # 1. Убеждаемся, что пользовательские утилиты AppArmor установлены
+    if ! is_pkg_installed apparmor; then
+        msg_action "Установка пакета apparmor..."
+        apt_safe install -y apparmor >/dev/null 2>&1 || true
+    fi
+    
+    # 2. Запускаем службу, если она не активна
+    systemctl enable apparmor 2>/dev/null || true
+    if ! systemctl is-active --quiet apparmor 2>/dev/null; then
+        systemctl start apparmor 2>/dev/null || true
+    fi
+
+    # 3. Проверяем статус в ядре
     local aa
     aa=$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null) || aa="N"
 
     if [ "$aa" = "Y" ]; then
-        msg_ok "AppArmor активен в ядре"
-        systemctl enable apparmor 2>/dev/null || true
-        systemctl start apparmor 2>/dev/null || true
+        msg_ok "AppArmor включен в ядре"
+        # Углубленная проверка: загружены ли политики
+        if command -v aa-enabled >/dev/null 2>&1 && aa-enabled --quiet 2>/dev/null; then
+            msg_ok "Политики AppArmor успешно загружены"
+        else
+            msg_warn "Политики AppArmor не энфорсятся"
+            msg_dim "Home Assistant может показать предупреждение (Unsupported)"
+        fi
         mark_done "$sid"
         return 0
     fi
