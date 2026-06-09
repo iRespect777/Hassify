@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 20.9.992
+# Version: 20.9.993
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="20.9.992"
+readonly SCRIPT_VERSION="20.9.993"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -3675,6 +3675,7 @@ step_configure_apparmor() {
             save_config
             msg_ok "Перезагрузка через 10 секунд..."
             msg_dim "Установка продолжится автоматически после загрузки"
+            msg_dim "Следить за логом после входа: tail -f /var/log/ha_install_reboot.log"
             sleep 10
             sync
             reboot
@@ -3703,6 +3704,8 @@ step_configure_apparmor() {
                 if setup_reboot_continue "apparmor"; then
                     save_config
                     msg_ok "Перезагрузка..."
+                    msg_dim "После загрузки скрипт продолжит работу автоматически в фоне."
+                    msg_dim "Следить за логом: tail -f /var/log/ha_install_reboot.log"
                     sleep 3
                     sync
                     reboot
@@ -5908,6 +5911,8 @@ show_banner() {
 # ФИНАЛЬНЫЙ ОТЧЁТ
 # ============================================================================
 show_final() {
+  rm -f /etc/profile.d/ha-install-notify.sh 2>/dev/null || true
+  
   local ip; ip=$(hostname -I 2>/dev/null | awk '{print $1}') || ip="localhost"
   local now; now=$(date +%s)
   local el=$(( now - ${INSTALL_START:-$now} ))
@@ -6156,6 +6161,26 @@ main() {
       exit 1
     fi
     msg_info "Продолжение с шага: ${FROM_STEP}"
+    
+    # Восстанавливаем токены уведомлений и настройки из сохраненного конфига
+    load_config
+    
+    # Оповещаем пользователя, что скрипт ожил после перезагрузки
+    send_notification "Система перезагружена. Установка HA продолжается (шаг ${FROM_STEP})..."
+    
+    # Создаем скрипт-баннер для SSH (безопаснее и надежнее, чем правка /etc/motd)
+    cat > /etc/profile.d/ha-install-notify.sh << 'MOTDEOF'
+echo ""
+echo "  ============================================="
+echo "  => HA УСТАНОВЩИК ПРОДОЛЖАЕТ РАБОТУ В ФОНЕ <="
+echo "  ============================================="
+echo ""
+echo "  Следить за логом в реальном времени:"
+echo "    sudo tail -f /var/log/ha_install_reboot.log"
+echo ""
+MOTDEOF
+    chmod +x /etc/profile.d/ha-install-notify.sh
+
     local skip=true
     for s in "${ALL_STEPS[@]}"; do
       [ "$s" = "$FROM_STEP" ] && { skip=false; break; }
