@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Home Assistant Supervised - ULTIMATE INSTALLER
-# Version: 20.9.993
+# Version: 20.9.994
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/HAS-tvbox
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="20.9.993"
+readonly SCRIPT_VERSION="20.9.994"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="mediahome/ha-installer"
 readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
@@ -890,7 +890,7 @@ SVCEOF
 
 remove_reboot_continue() {
   systemctl disable "${REBOOT_CONTINUE_SVC}" 2>/dev/null || true
-  rm -f "/etc/systemd/system/${REBOOT_CONTINUE_SVC}.service" "$REBOOT_ATTEMPT_FILE" 2>/dev/null || true
+  rm -f "/etc/systemd/system/${REBOOT_CONTINUE_SVC}.service" 2>/dev/null || true
   systemctl daemon-reload 2>/dev/null || true
 }
 
@@ -3635,6 +3635,18 @@ step_configure_apparmor() {
         systemctl start apparmor 2>/dev/null || true
     fi
 
+    # Защита от бесконечного цикла перезагрузок
+    if [ -n "$FROM_STEP" ]; then
+      local attempts=0
+      [ -f "$REBOOT_ATTEMPT_FILE" ] && attempts=$(cat "$REBOOT_ATTEMPT_FILE" 2>/dev/null || echo 0)
+      if [ "$attempts" -ge 3 ]; then
+        msg_error "AppArmor не удалось включить после 3 перезагрузок."
+        msg_warn "Продолжаем установку без AppArmor (HA будет Unsupported)."
+        rm -f "$REBOOT_ATTEMPT_FILE"
+        mark_done "$sid"
+        return 0
+      fi
+    fi
     # 3. Проверяем статус в ядре
     local aa
     aa=$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null) || aa="N"
@@ -5911,7 +5923,10 @@ show_banner() {
 # ФИНАЛЬНЫЙ ОТЧЁТ
 # ============================================================================
 show_final() {
+  # Удаляем скрипт-баннер о ongoing установке
   rm -f /etc/profile.d/ha-install-notify.sh 2>/dev/null || true
+  # Очищаем счётчик попыток перезагрузки, если установка успешно завершена
+  rm -f "$REBOOT_ATTEMPT_FILE" 2>/dev/null || true
   
   local ip; ip=$(hostname -I 2>/dev/null | awk '{print $1}') || ip="localhost"
   local now; now=$(date +%s)
