@@ -13,7 +13,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Bash Version](https://img.shields.io/badge/Bash-%3E%3D4.0-green.svg)](https://www.gnu.org/software/bash/)
 <!-- TODO: Замените iRespect777/HAS-tvbox на ваш репозиторий -->
-[![GitHub release](https://img.shields.io/github/v/release/iRespect777/HAS-tvbox?include_prereleases)](https://github.com/iRespect777/SBC-HA-Forge/releases)
+[![GitHub release](https://img.shields.io/github/v/release/iRespect777/SBC-HA-Forge?include_prereleases)](https://github.com/iRespect777/SBC-HA-Forge/releases)
 
 </div>
 
