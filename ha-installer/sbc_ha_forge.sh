@@ -5,7 +5,7 @@
 # Version: 20.9.996
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
-# Repository: https://github.com/iRespect777/HAS-tvbox
+# Repository: https://github.com/iRespect777/SBC-HA-Forge
 # ============================================================================
 if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
