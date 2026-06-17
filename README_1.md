@@ -43,17 +43,9 @@
 * **Доступ:** Root права (`sudo`).
 
 ### 🚀 Быстрый старт
-Подключитесь к вашему устройству по SSH и выполните команду:
-
 ```bash
-<!-- TODO: Замените iRespect777/HAS-tvbox и install.sh на реальные ссылки, если они отличаются -->
-wget -qO- https://raw.githubusercontent.com/iRespect777/HAS-tvbox/main/install.sh | bash
-```
-*Или скачайте скрипт и запустите его вручную:*
-```bash
-wget https://raw.githubusercontent.com/iRespect777/HAS-tvbox/main/install.sh
-chmod +x install.sh
-sudo ./install.sh
+wget https://raw.githubusercontent.com/iRespect777/SBC-HA-Forge/refs/heads/main/ha-installer/sbc_ha_forge.sh
+sudo bash sbc_ha_forge.sh
 ```
 
 После запуска откроется интерактивный мастер, который проведет вас через все этапы настройки.
