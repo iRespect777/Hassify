@@ -101,17 +101,9 @@ It automatically resolves architecture issues, fakes `os-release` to pass HA che
 * **Access:** Root privileges (`sudo`).
 
 ### 🚀 Quick Start
-Connect to your device via SSH and run:
-
 ```bash
-<!-- TODO: Replace iRespect777/HAS-tvbox and install.sh with actual links if different -->
-wget -qO- https://raw.githubusercontent.com/iRespect777/HAS-tvbox/main/install.sh | bash
-```
-*Or download the script and run it manually:*
-```bash
-wget https://raw.githubusercontent.com/iRespect777/HAS-tvbox/main/install.sh
-chmod +x install.sh
-sudo ./install.sh
+wget https://raw.githubusercontent.com/iRespect777/SBC-HA-Forge/refs/heads/main/ha-installer/sbc_ha_forge.sh
+sudo bash sbc_ha_forge.sh
 ```
 
 An interactive wizard will open, guiding you through the configuration process.
