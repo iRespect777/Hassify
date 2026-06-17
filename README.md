@@ -134,4 +134,5 @@ Several presets are built into the script:
 
 ### 🤝 Contributing & Support
 If you find a bug or want to suggest a feature, please open an Issue in the repository.
+
 ---
