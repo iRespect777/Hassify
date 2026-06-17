@@ -5966,9 +5966,9 @@ show_banner() {
 	      echo " \___ \|  _ \| |     | |_| | / _ \   | |_ | | | | |_) | |  _|  _|"
 	      echo "  ___) | |_) | |___  |  _  |/ ___ \  |  _|| |_| |  _ <| |_| | |___"
 	      echo " |____/|____/ \____| |_| |_/_/   \_\ |_|   \___/|_| \_\\\____|_____|"
-        echo -e "${NC}"
-        echo -e "${BLUE}  [ SBC-HA-FORGE  Ultimate HA Supervised Installer ]${NC} ${WHITE}${BOLD}Установщик v${SCRIPT_VERSION}${NC}"
-
+          echo -e "${NC}"
+          echo -e "${BLUE}  [ SBC-HA-FORGE ]${NC} ${WHITE}${BOLD}Установщик v${SCRIPT_VERSION}${NC}"
+          echo -e "${DIM}  Ковка Home Assistant Supervised на TV-боксах и SBC${NC}"
 
         # Статус HA если установлен
         if systemctl is-active --quiet hassio-supervisor 2>/dev/null; then
