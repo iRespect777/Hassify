@@ -1,8 +1,8 @@
 <div align="center">
 
 <!-- Кнопки переключения языков -->
-<a href="#русский"><img src="https://img.shields.io/badge/🇷🇺_Русский-activeblue" alt="Русский"></a>
-<a href="#english"><img src="https://img.shields.io/badge/🇬🇧_English-inactive-lightgrey" alt="English"></a>
+<a href="#-русский"><img src="https://img.shields.io/badge/🇷🇺_Русский-activeblue" alt="Русский"></a>
+<a href="#-english"><img src="https://img.shields.io/badge/🇬🇧_English-inactive-lightgrey" alt="English"></a>
 
 
 # Ультимативный установщик Home Assistant Supervised для TV-боксов, SBC и десктопов (Armbian / Debian)(SBC-HA-Forge).
