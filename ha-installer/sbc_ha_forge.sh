@@ -5965,9 +5965,9 @@ show_banner() {
 	      echo " / ___|| __ ) / ___| | | | |  / \    |  ___/ _ \|  _ \ / ___| ____|"
 	      echo " \___ \|  _ \| |     | |_| | / _ \   | |_ | | | | |_) | |  _|  _|"
 	      echo "  ___) | |_) | |___  |  _  |/ ___ \  |  _|| |_| |  _ <| |_| | |___"
-	      echo " |____/|____/ \____| |_| |_/_/   \_\ |_|   \___/|_| \_\ \____|_____|"
+	      echo " |____/|____/ \____| |_| |_/_/   \_\ |_|   \___/|_| \_\\\____|_____|"
         echo -e "${NC}"
-        echo -e "${BLUE}  [ SBC-HA-FORGE ]${NC} ${WHITE}${BOLD}Установщик v${SCRIPT_VERSION}${NC}"
+        echo -e "${BLUE}  [ SBC-HA-FORGE  Ultimate HA Supervised Installer ]${NC} ${WHITE}${BOLD}Установщик v${SCRIPT_VERSION}${NC}"
 
 
         # Статус HA если установлен
