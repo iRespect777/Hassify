@@ -70,8 +70,8 @@ sudo bash sbc_ha_forge.sh
 <div align="center">
 
 <!-- Кнопки переключения языков -->
-<a href="#русский"><img src="https://img.shields.io/badge/🇷🇺_Русский-inactive-lightgrey" alt="Русский"></a>
-<a href="#english"><img src="https://img.shields.io/badge/🇬🇧_English-activeblue" alt="English"></a>
+<a href="#-русский"><img src="https://img.shields.io/badge/🇷🇺_Русский-inactive-lightgrey" alt="Русский"></a>
+<a href="#-english"><img src="https://img.shields.io/badge/🇬🇧_English-activeblue" alt="English"></a>
 
 </div>
 
