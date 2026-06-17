@@ -67,8 +67,6 @@ sudo bash sbc_ha_forge.sh
 
 ### 🤝 Вклад и помощь
 Если вы нашли баг или хотите предложить фичу, создайте Issue в репозитории.
-<!-- TODO: Укажите ваши контакты или ссылку на обсуждение, если нужно -->
-**Автор:** [Ваше Имя / Ник GitHub]
 
 ---
 
@@ -136,7 +134,4 @@ Several presets are built into the script:
 
 ### 🤝 Contributing & Support
 If you find a bug or want to suggest a feature, please open an Issue in the repository.
-<!-- TODO: Add your contacts or link to discussions if needed -->
-**Author:** [Your Name / GitHub Username]
-
 ---
