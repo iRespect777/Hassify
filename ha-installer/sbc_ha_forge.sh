@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
-# Home Assistant Supervised - ULTIMATE INSTALLER
+# SBC-HA-Forge ULTIMATE INSTALLER Home Assistant Supervised
 # Version: 21
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
