@@ -27,10 +27,10 @@ readonly FAKED_OS_RELEASE="${BACKUP_DIR}/os-release.faked"
 readonly METRICS_DIR="/var/lib/prometheus/node-exporter"
 readonly HA_SUPPORTED_CODENAMES="bookworm bullseye trixie"
 readonly HISTORY_FILE="${HA_INSTALLER_DIR}/history"
-readonly REBOOT_CONTINUE_SVC="ha-install-continue"
+readonly REBOOT_CONTINUE_SVC="hassify-continue"
 readonly REBOOT_ATTEMPT_FILE="${HA_INSTALLER_DIR}/reboot_attempts"
-readonly HA_INFO_FILE="${HA_INSTALLER_DIR}/ha-info.txt"
-readonly SAFE_SCRIPT_PATH="/usr/local/bin/ha-install"
+readonly HA_INFO_FILE="${HA_INSTALLER_DIR}/hassify-info.txt"
+readonly SAFE_SCRIPT_PATH="/usr/local/bin/hassify"
 
 set -uo pipefail
 
@@ -876,8 +876,8 @@ Type=oneshot
 ExecStart=/bin/bash ${SAFE_SCRIPT_PATH} ${exec_args}
 ExecStartPost=/bin/rm -f ${svc_file}
 RemainAfterExit=no
-StandardOutput=append:${LOG_DIR}/ha_install_reboot.log
-StandardError=append:${LOG_DIR}/ha_install_reboot.log
+StandardOutput=append:${LOG_DIR}/hassify_reboot.log
+StandardError=append:${LOG_DIR}/hassify_reboot.log
 
 [Install]
 WantedBy=multi-user.target
@@ -1716,11 +1716,11 @@ generate_info_file() {
   После этого ha-backup будет автоматически создавать полный снапшот системы.
 
 ОБСЛУЖИВАНИЕ:
-  sudo ha-install --check       Диагностика
-  sudo ha-install --status      Мониторинг
-  sudo ha-install --update      Обновить HA
-  sudo ha-install --self-test   Самотест
-  sudo ha-install --benchmark   Тест железа
+  sudo hassify --check       Диагностика
+  sudo hassify --status      Мониторинг
+  sudo hassify --update      Обновить HA
+  sudo hassify --self-test   Самотест
+  sudo hassify --benchmark   Тест железа
 
 СЛУЖБЫ:
   systemctl status hassio-supervisor
@@ -3752,7 +3752,7 @@ step_configure_apparmor() {
             save_config
             msg_ok "Перезагрузка через 10 секунд..."
             msg_dim "Установка продолжится автоматически после загрузки"
-            msg_dim "Следить за логом после входа: tail -f /var/log/ha_install_reboot.log"
+            msg_dim "Следить за логом после входа: tail -f /var/log/hassify_reboot.log"
             sleep 10
             sync
             reboot
@@ -3782,7 +3782,7 @@ step_configure_apparmor() {
                     save_config
                     msg_ok "Перезагрузка..."
                     msg_dim "После загрузки скрипт продолжит работу автоматически в фоне."
-                    msg_dim "Следить за логом: tail -f /var/log/ha_install_reboot.log"
+                    msg_dim "Следить за логом: tail -f /var/log/hassify_reboot.log"
                     sleep 3
                     sync
                     reboot
@@ -5149,8 +5149,8 @@ do_rescue() {
 
     echo ""
     msg_info "Дополнительная диагностика:"
-    msg_dim "  sudo ha-install --check                 Полная проверка"
-    msg_dim "  sudo ha-install --status                Мониторинг (live)"
+    msg_dim "  sudo hassify --check                 Полная проверка"
+    msg_dim "  sudo hassify --status                Мониторинг (live)"
     msg_dim "  journalctl -u hassio-supervisor -n 50   Логи Supervisor"
     msg_dim "  docker logs homeassistant --tail 50     Логи HA"
     msg_dim "  dmesg | tail -50                        Системные ошибки"
@@ -5830,7 +5830,7 @@ show_help() {
   cat << HELP
 HA Установщик v${SCRIPT_VERSION}
 
-  sudo ./install.sh                     Интерактивный мастер/меню
+  sudo hassify                     Интерактивный мастер/меню
 
   РЕЖИМЫ:
     -c, --check                         Диагностика системы
@@ -5874,14 +5874,14 @@ HA Установщик v${SCRIPT_VERSION}
     ${HA_INFO_FILE}                     Информация об установке
 
   ПРИМЕРЫ:
-    sudo ./install.sh                                   Мастер установки
-    sudo ./install.sh --profile standard                Стандартный профиль
-    sudo ./install.sh --profile standard --timezone Europe/Moscow
-    sudo ./install.sh --check                           Диагностика
-    sudo ./install.sh --update                          Обновить HA
-    sudo ./install.sh --benchmark                       Тест железа
-    sudo ./install.sh --profile full --data-dir /mnt/ssd --auto-reboot
-    sudo ./install.sh --restore-backup /mnt/usb/ha_config_20250101.tar.gz
+    sudo hassify                                   Мастер установки
+    sudo hassify --profile standard                Стандартный профиль
+    sudo hassify --profile standard --timezone Europe/Moscow
+    sudo hassify --check                           Диагностика
+    sudo hassify --update                          Обновить HA
+    sudo hassify --benchmark                       Тест железа
+    sudo hassify --profile full --data-dir /mnt/ssd --auto-reboot
+    sudo hassify --restore-backup /mnt/usb/ha_config_20250101.tar.gz
 
 HELP
 }
@@ -6258,7 +6258,7 @@ echo "  => HA УСТАНОВЩИК ПРОДОЛЖАЕТ РАБОТУ В ФОНЕ
 echo "  ============================================="
 echo ""
 echo "  Следить за логом в реальном времени:"
-echo "    sudo tail -f /var/log/ha_install_reboot.log"
+echo "    sudo tail -f /var/log/hassify_reboot.log"
 echo ""
 MOTDEOF
     chmod +x /etc/profile.d/ha-install-notify.sh
