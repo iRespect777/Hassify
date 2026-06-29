@@ -13,16 +13,16 @@ fi
 
 readonly SCRIPT_VERSION="21"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
-readonly INSTALLER_REPO="mediahome/ha-installer"
-readonly HA_INSTALLER_DIR="/var/lib/ha-installer"
+readonly INSTALLER_REPO="iRespect777/hassify"
+readonly HA_INSTALLER_DIR="/var/lib/hassify"
 readonly STATE_FILE="${HA_INSTALLER_DIR}/state"
 readonly BACKUP_DIR="${HA_INSTALLER_DIR}/backup"
 readonly HA_CONFIG_FILE="${HA_INSTALLER_DIR}/config"
 readonly HA_BACKUP_DIR="/var/backups/homeassistant"
-readonly LOCK_FILE="/var/lock/ha_install.lock"
+readonly LOCK_FILE="/var/lock/hassify.lock"
 readonly LOG_DIR="/var/log"
 readonly HASSIO_DIR="/usr/share/hassio"
-readonly GRACE_MARKER="/tmp/.ha_just_installed"
+readonly GRACE_MARKER="/tmp/.hassify_just_installed"
 readonly FAKED_OS_RELEASE="${BACKUP_DIR}/os-release.faked"
 readonly METRICS_DIR="/var/lib/prometheus/node-exporter"
 readonly HA_SUPPORTED_CODENAMES="bookworm bullseye trixie"
@@ -76,7 +76,7 @@ HA_MACHINE="$HA_DEFAULT_MACHINE"; MACHINE_EXPLICIT=false
 OVERRIDE_OS_AGENT_VER=""; OVERRIDE_HA_VER=""
 LOG_FILE=""; LOGGING_ACTIVE=false; TEE_PID=""
 OS_RELEASE_FAKED=false; DAEMON_RELOAD_NEEDED=false
-PREFETCH_PID=""; HA_TMP="/tmp/ha-install"; INSTALL_START=""
+PREFETCH_PID=""; HA_TMP="/tmp/hassify"; INSTALL_START=""
 PROFILE=""; FROM_STEP=""; IMPORT_CONFIG=""
 CURRENT_STEP_NUM=0
 
