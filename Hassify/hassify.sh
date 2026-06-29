@@ -1,8 +1,8 @@
 #!/bin/bash
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
-# Hassify ULTIMATE INSTALLER Home Assistant Supervised
-# Version: 22
+# Hassify - Ultimate Home Assistant Supervised Installer
+# Version: 23
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/Hassify
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="22"
+readonly SCRIPT_VERSION="23"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="iRespect777/hassify"
 readonly HA_INSTALLER_DIR="/var/lib/hassify"
@@ -414,7 +414,7 @@ export_config() {
   local ef="${HA_BACKUP_DIR}/ha_config_$(date +%Y%m%d).sh"
   mkdir -p "$HA_BACKUP_DIR"
   {
-    echo "# HA Installer config $(date)"
+    echo "# Hassify config $(date)"
     for opt in OPT_ZRAM OPT_EMMC_TUNING OPT_USB_POWER OPT_UFW OPT_SSH_HARDENING \
       OPT_AUTOUPDATE OPT_WATCHDOG OPT_THERMAL OPT_BACKUP OPT_HACS OPT_HOSTNAME \
       OPT_MONITORING OPT_BOOT_RECOVERY OPT_USB_DETECT OPT_STATIC_IP OPT_TELEGRAM \
@@ -465,7 +465,7 @@ _send_webhook() {
   local msg="$2"
   local host
   host=$(hostname 2>/dev/null || echo "ha-box")
-  local full_msg="HA (${host}): ${msg}"
+  local FULL_MSG="Hassify (${HOST}): ${MSG}"
 
   case "$url" in
 
@@ -551,7 +551,7 @@ send_notification() {
       curl -s -X POST \
         "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
         --data-urlencode "chat_id=${TG_CHAT}" \
-        --data-urlencode "text=HA ($(hostname)): ${msg}" \
+        --data-urlencode "text=Hassify ($(hostname)): ${msg}" \
         >/dev/null 2>&1
     fi
   fi
@@ -571,7 +571,7 @@ test_notifications() {
     rc=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
       "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
       --data-urlencode "chat_id=${TG_CHAT}" \
-      --data-urlencode "text=HA Installer: тест" 2>/dev/null)
+      --data-urlencode "text=Hassify: тест" 2>/dev/null)
     [ "$rc" = "200" ] && msg_ok "Telegram OK" || { msg_warn "Telegram ошибка (${rc})"; ok=false; }
   fi
   if [ -n "$OPT_WEBHOOK_URL" ]; then
@@ -586,27 +586,27 @@ test_notifications() {
           -X POST "$OPT_WEBHOOK_URL" \
           -H "Title: Home Assistant" \
           -H "Tags: house" \
-          -d "HA Installer: тест уведомление" \
+          -d "Hassify: тест уведомление" \
           2>/dev/null) || rc="000"
         ;;
       *discord.com/api/webhooks/*|*discordapp.com/api/webhooks/*)
         rc=$(curl -s -o /dev/null -w "%{http_code}" \
           -X POST "$OPT_WEBHOOK_URL" \
           -H "Content-Type: application/json" \
-          -d '{"content":"HA Installer: тест уведомление"}' \
+          -d '{"content":"Hassify: тест уведомление"}' \
           2>/dev/null) || rc="000"
         ;;
       *hooks.slack.com/*)
         rc=$(curl -s -o /dev/null -w "%{http_code}" \
           -X POST "$OPT_WEBHOOK_URL" \
           -H "Content-Type: application/json" \
-          -d '{"text":"HA Installer: тест уведомление"}' \
+          -d '{"text":"Hassify: тест уведомление"}' \
           2>/dev/null) || rc="000"
         ;;
       *)
         rc=$(curl -s -o /dev/null -w "%{http_code}" \
           -X POST "$OPT_WEBHOOK_URL" \
-          -d "HA Installer: тест уведомление" \
+          -d "Hassify: тест уведомление" \
           2>/dev/null) || rc="000"
         ;;
     esac
@@ -867,7 +867,7 @@ setup_reboot_continue() {
 
     cat > "$svc_file" << SVCEOF
 [Unit]
-Description=HA Installer - продолжение после перезагрузки
+Description=Hassify - продолжение после перезагрузки
 After=network-online.target
 Wants=network-online.target
 
@@ -1685,7 +1685,7 @@ generate_info_file() {
 ============================================
  Home Assistant - Информация об установке
  Создан: $(date)
- Установщик: v${SCRIPT_VERSION}
+ Hassify: v${SCRIPT_VERSION}
 ============================================
 
 ДОСТУП:
@@ -1701,7 +1701,7 @@ generate_info_file() {
   Данные HA:    ${HASSIO_DIR}/
   Бэкапы:       ${HA_BACKUP_DIR}/
   Установщик:   ${HA_INSTALLER_DIR}/
-  Логи:         ${LOG_DIR}/ha_install_*.log
+  Логи:         ${LOG_DIR}/hassify_*.log
   Информация:   ${HA_INFO_FILE}
 
 КОМАНДЫ:
@@ -2233,10 +2233,10 @@ run_wizard() {
 
   # Welcome
   if [ "$HAS_WHIPTAIL" = true ]; then
-    whiptail --title "HA Установщик v${SCRIPT_VERSION}" --msgbox \
+    whiptail --title "Hassify v${SCRIPT_VERSION}" --msgbox \
       "Установщик Home Assistant Supervised\n\n${si}\nRAM: ${ram_mb}МБ | Диск: ${disk_mb}МБ\n\nESC = вернуться в меню" 14 64
   else
-    header "HA Установщик v${SCRIPT_VERSION}"
+    header "Hassify v${SCRIPT_VERSION}"
     msg_info "${si}"; msg_info "RAM: ${ram_mb}МБ | Диск: ${disk_mb}МБ"; echo ""
   fi
 
@@ -2585,7 +2585,7 @@ module_notifications() {
   # Отправка тестового уведомления (если не отключили)
   if [ "$notif" != "none" ]; then
     msg_action "Отправка тестового уведомления..."
-    /usr/local/bin/ha-notify "Тест уведомлений HA Installer"
+    /usr/local/bin/ha-notify "Тест уведомлений Hassify"
     msg_ok "Проверьте устройство/чат"
   fi
 }
@@ -2609,7 +2609,7 @@ show_main_menu() {
 
   local choice
   if command -v whiptail &>/dev/null; then
-    choice=$(whiptail --title "HA Установщик v${SCRIPT_VERSION}" --menu "Действие:" 24 60 15 \
+    choice=$(whiptail --title "Hassify v${SCRIPT_VERSION}" --menu "Действие:" 24 60 15 \
       "install"   "Установить HA Supervised" \
       "modules"   "Установить модули (VPN, UFW, Cloudflare)" \
       "check"     "Диагностика" \
@@ -2627,7 +2627,7 @@ show_main_menu() {
       "help"      "Помощь" \
       3>&1 1>&2 2>&3) || return 1
   else
-    choice=$(text_menu "HA Установщик v${SCRIPT_VERSION}" "Действие:" \
+    choice=$(text_menu "Hassify v${SCRIPT_VERSION}" "Действие:" \
       "install"   "Установить HA" \
       "modules"   "Установить модули (VPN, UFW, Cloudflare)" \
       "check"     "Диагностика" \
@@ -4233,7 +4233,7 @@ configure_hostname_avahi() {
 # Настройка заданий cron
 configure_cron() {
   {
-    echo "# HA Installer v${SCRIPT_VERSION}"
+    echo "# Hassify v${SCRIPT_VERSION}"
     [ "$OPT_WATCHDOG" = true ] && printf '*/5 * * * * root /usr/local/bin/ha-watchdog >/dev/null 2>&1\n*/10 * * * * root /usr/local/bin/ha-net-recovery >/dev/null 2>&1\n30 3 * * * root /usr/local/bin/ha-cleanup >/dev/null 2>&1\n'
     [ "$OPT_THERMAL" = true ] && echo '*/5 * * * * root /usr/local/bin/ha-thermal >/dev/null 2>&1'
     [ "$OPT_BACKUP" = true ] && echo '0 4 * * 0 root /usr/local/bin/ha-backup >/dev/null 2>&1'
@@ -4279,7 +4279,7 @@ TG_CHAT=$(cat  "${SECRETS}/tg_chat"     2>/dev/null || echo "")
 WEBHOOK=$(cat  "${SECRETS}/webhook_url"  2>/dev/null || echo "")
 
 HOST=$(hostname 2>/dev/null || echo "ha-box")
-FULL_MSG="HA (${HOST}): ${MSG}"
+FULL_MSG="Hassify (${HOST}): ${MSG}"
 
 if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
   curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
@@ -5207,7 +5207,7 @@ do_status() {
 
     # Шапка — без show_banner (он делает curl и clear внутри)
     echo -e "${BLUE}${sep}${NC}"
-    echo -e "${WHITE}${BOLD}  HA Установщик v${SCRIPT_VERSION} — Мониторинг${NC}"
+    echo -e "${WHITE}${BOLD}  Hassify v${SCRIPT_VERSION} — Мониторинг${NC}"
     echo -e "${BLUE}${sep}${NC}"
 
     # Лёгкие данные — обновляются каждые 5с
@@ -5828,7 +5828,7 @@ do_self_test() {
 # ============================================================================
 show_help() {
   cat << HELP
-HA Установщик v${SCRIPT_VERSION}
+Hassify v${SCRIPT_VERSION}
 
   sudo hassify                     Интерактивный мастер/меню
 
@@ -5992,7 +5992,7 @@ show_banner() {
 # ============================================================================
 show_final() {
   # Удаляем скрипт-баннер о ongoing установке
-  rm -f /etc/profile.d/ha-install-notify.sh 2>/dev/null || true
+  rm -f /etc/profile.d/hassify-notify.sh 2>/dev/null || true
   # Очищаем счётчик попыток перезагрузки, если установка успешно завершена
   rm -f "$REBOOT_ATTEMPT_FILE" 2>/dev/null || true
   
@@ -6117,7 +6117,7 @@ show_final() {
     fi
     echo ""
   fi
-  send_notification "HA установлен: http://${ip}:8123"
+  send_notification "Hassify: HA установлен http://${ip}:8123"
 }
 
 # ============================================================================
@@ -6255,7 +6255,7 @@ main() {
     cat > /etc/profile.d/ha-install-notify.sh << 'MOTDEOF'
 echo ""
 echo "  ============================================="
-echo "  => HA УСТАНОВЩИК ПРОДОЛЖАЕТ РАБОТУ В ФОНЕ <="
+echo "  => HASSIFY ПРОДОЛЖАЕТ РАБОТУ В ФОНЕ <="
 echo "  ============================================="
 echo ""
 echo "  Следить за логом в реальном времени:"
