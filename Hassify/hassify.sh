@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2155,SC2086
 # ============================================================================
 # Hassify ULTIMATE INSTALLER Home Assistant Supervised
-# Version: 21
+# Version: 22
 # Platform: TV-Boxes & SBC (Armbian Bookworm/Trixie / aarch64 / x86_64)
 # License: MIT
 # Repository: https://github.com/iRespect777/Hassify
@@ -11,7 +11,7 @@ if [ -z "$BASH_VERSION" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "Requires bash >= 4.0"; exit 1
 fi
 
-readonly SCRIPT_VERSION="21"
+readonly SCRIPT_VERSION="22"
 readonly HA_DEFAULT_MACHINE="qemuarm-64"
 readonly INSTALLER_REPO="iRespect777/hassify"
 readonly HA_INSTALLER_DIR="/var/lib/hassify"
@@ -1712,7 +1712,7 @@ generate_info_file() {
 
 ПОЛНЫЙ БЭКАП (Через API HA - сохраняет аддоны и БД):
   1. Создайте Long-Lived Access Token в: Настройки профиля -> Безопасность
-  2. Сохраните токен: echo 'ТОКЕН' | sudo tee /var/lib/ha-installer/secrets/ha_api_token
+  2. Сохраните токен: echo 'ТОКЕН' | sudo tee ${HA_INSTALLER_DIR}/secrets/ha_api_token
   После этого ha-backup будет автоматически создавать полный снапшот системы.
 
 ОБСЛУЖИВАНИЕ:
@@ -4273,7 +4273,7 @@ LAST=$(cat "$RF" 2>/dev/null || echo 0)
 [ $((NOW - LAST)) -lt 30 ] && exit 0
 echo "$NOW" > "$RF"
 
-SECRETS="/var/lib/ha-installer/secrets"
+SECRETS="/var/lib/hassify/secrets"
 TG_TOKEN=$(cat "${SECRETS}/tg_token"    2>/dev/null || echo "")
 TG_CHAT=$(cat  "${SECRETS}/tg_chat"     2>/dev/null || echo "")
 WEBHOOK=$(cat  "${SECRETS}/webhook_url"  2>/dev/null || echo "")
