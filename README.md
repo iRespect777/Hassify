@@ -56,10 +56,10 @@ sudo bash hassify.sh
 5. **Custom:** Ручной выбор каждого компонента через меню.
 
 ### ⚙️ Полезные команды после установки
-* `sudo ha-install --status` — Мониторинг системы в реальном времени.
-* `sudo ha-install --check` — Диагностика состояния HA и Docker.
-* `sudo ha-install --rescue` — Режим восстановления (автоматически чинит DNS, Docker, Supervisor).
-* `sudo ha-install --modules` — Установка дополнительных модулей (VPN, HACS и др.).
+* `sudo hassify --status` — Мониторинг системы в реальном времени.
+* `sudo hassify --check` — Диагностика состояния HA и Docker.
+* `sudo hassify --rescue` — Режим восстановления (автоматически чинит DNS, Docker, Supervisor).
+* `sudo hassify --modules` — Установка дополнительных модулей (VPN, HACS и др.).
 * `ha-health` — Краткий отчет о здоровье системы.
 
 ### 🤝 Вклад и помощь
@@ -117,10 +117,10 @@ Several presets are built into the script:
 5. **Custom:** Manual selection of every component via menu.
 
 ### ⚙️ Useful Post-Install Commands
-* `sudo ha-install --status` — Real-time system monitoring.
-* `sudo ha-install --check` — Diagnose HA and Docker health.
-* `sudo ha-install --rescue` — Rescue mode (automatically fixes DNS, Docker, Supervisor).
-* `sudo ha-install --modules` — Install additional modules (VPN, HACS, etc.).
+* `sudo hassify --status` — Real-time system monitoring.
+* `sudo hassify --check` — Diagnose HA and Docker health.
+* `sudo hassify --rescue` — Rescue mode (automatically fixes DNS, Docker, Supervisor).
+* `sudo hassify --modules` — Install additional modules (VPN, HACS, etc.).
 * `ha-health` — Quick system health report.
 
 ### 🤝 Contributing & Support
