@@ -5669,10 +5669,15 @@ do_self_update() {
   latest=$(get_latest_release "$INSTALLER_REPO")
   [ -z "$latest" ] && { msg_warn "Не удалось проверить версию"; return 1; }
 
-  [ "$SCRIPT_VERSION" = "$latest" ] && {
+  # Убираем префикс 'v' для корректного сравнения чисел
+  # (например, сравниваем "23" с "23", а не "23" с "v23")
+  local latest_clean="${latest#v}"
+  
+  [ "$SCRIPT_VERSION" = "$latest_clean" ] && {
     msg_ok "Актуальная версия: ${SCRIPT_VERSION}"
     return 0
   }
+  
   msg_info "Доступно обновление: ${SCRIPT_VERSION} -> ${latest}"
 
   # Интерактивное подтверждение
@@ -5685,18 +5690,18 @@ do_self_update() {
     esac
   fi
 
-  # Скачиваем во временный файл через mktemp.
-  # НЕ используем "${0}.new" — если скрипт запущен из /tmp,
-  # то после обновления он останется в /tmp и потеряется.
   local nf
-  nf=$(mktemp /tmp/ha_update_XXXXXX.sh 2>/dev/null) || {
+  nf=$(mktemp /tmp/hassify_update_XXXXXX.sh 2>/dev/null) || {
     msg_error "Не удалось создать временный файл"
     return 1
   }
 
-  msg_action "Загрузка v${latest}..."
+  # Исправлено: убрана лишняя 'v' перед ${latest}
+  msg_action "Загрузка ${latest}..."
+  
+  # Исправлено: скачиваем из тега релиза (${latest}), а не из ветки main!
   if ! wget -q -O "$nf" \
-    "https://raw.githubusercontent.com/${INSTALLER_REPO}/main/install.sh" \
+    "https://raw.githubusercontent.com/${INSTALLER_REPO}/${latest}/install.sh" \
     2>/dev/null; then
     msg_error "Загрузка не удалась"
     rm -f "$nf"
@@ -5706,7 +5711,6 @@ do_self_update() {
   # Проверяем размер — защита от пустых страниц 404
   local sz
   sz=$(wc -c < "$nf" 2>/dev/null || echo 0)
-  # Убираем пробелы которые может добавить wc
   sz="${sz//[^0-9]/}"
   if [ "${sz:-0}" -lt 10000 ]; then
     msg_error "Файл слишком мал (${sz}б) — возможно ошибка загрузки"
@@ -5721,7 +5725,7 @@ do_self_update() {
     return 1
   fi
 
-  # Проверяем что это наш скрипт а не чужой файл
+  # Проверяем что это наш скрипт
   if ! grep -q "SCRIPT_VERSION=" "$nf"; then
     msg_error "Некорректный файл (нет SCRIPT_VERSION)"
     rm -f "$nf"
@@ -5740,15 +5744,10 @@ do_self_update() {
   fi
   msg_info "Версия в файле: ${new_ver}"
 
-  # Сохраняем всегда в SAFE_SCRIPT_PATH (/usr/local/bin/ha-install).
-  # Скрипт запущен от root поэтому проблем с правами нет.
   local target="$SAFE_SCRIPT_PATH"
   mkdir -p "$(dirname "$target")"
   chmod +x "$nf"
 
-  # Пробуем атомарный mv.
-  # Если /tmp и /usr/local/bin на разных ФС — mv выполнит copy+delete,
-  # что не атомарно. В этом случае делаем cp + rm явно.
   if mv "$nf" "$target" 2>/dev/null; then
     msg_ok "Обновлён до ${new_ver}: ${target}"
   else
