@@ -41,7 +41,7 @@
 
 ### 🚀 Быстрый старт
 ```bash
-wget https://raw.githubusercontent.com/iRespect777/Hassify/refs/heads/main/ha-installer/hassify.sh
+wget https://raw.githubusercontent.com/iRespect777/Hassify/refs/heads/main/Hassify/hassify.sh
 sudo bash hassify.sh
 ```
 
@@ -102,7 +102,7 @@ It automatically resolves architecture issues, fakes `os-release` to pass HA che
 
 ### 🚀 Quick Start
 ```bash
-wget https://raw.githubusercontent.com/iRespect777/Hassify/refs/heads/main/ha-installer/hassify.sh
+wget https://raw.githubusercontent.com/iRespect777/Hassify/refs/heads/main/Hassify/hassify.sh
 sudo bash hassify.sh
 ```
 
